@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import random
 import time
 from dataclasses import dataclass
 from typing import Callable, Dict, Optional
@@ -8,6 +9,19 @@ from typing import Callable, Dict, Optional
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
+
+
+# 红米机型 UA 池（保持 phoneBrand=Redmi 一致），随机分配降低指纹一致性。
+REDMI_UA_POOL = [
+    "Mozilla/5.0 (Linux; Android 11; M2012K11AC) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/99.0.4844.88 Mobile Safari/537.36",  # K40
+    "Mozilla/5.0 (Linux; Android 12; 22041211AC) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/102.0.0.0 Mobile Safari/537.36",  # K50
+    "Mozilla/5.0 (Linux; Android 11; 2201117TY) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.104 Mobile Safari/537.36",  # Note 11
+    "Mozilla/5.0 (Linux; Android 13; 23049RAD8C) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Mobile Safari/537.36",  # Note 12
+]
+
+
+def get_random_ua() -> str:
+    return random.choice(REDMI_UA_POOL)
 
 
 @dataclass
@@ -34,8 +48,9 @@ class PangGuaiRunner:
         options: Optional[RunOptions] = None,
         logger: Optional[Callable[[str], None]] = None,
     ) -> None:
+        # 业务关键参数：用户鉴权 token + UA
         self.token = token
-        self.ua = ua
+        self.ua = self._normalize_ua(ua)
         self.options = options or RunOptions()
         self.log = logger or (lambda msg: None)
         self.stop_flag = False
@@ -57,7 +72,19 @@ class PangGuaiRunner:
         if self.stop_flag:
             raise InterruptedError("用户手动停止任务")
 
+    def _normalize_ua(self, ua: str) -> str:
+        ua_str = (ua or "").strip()
+        lower = ua_str.lower()
+        is_pc = ("windows" in lower) or ("macintosh" in lower) or ("mac os" in lower)
+        has_android = "android" in lower
+        if not ua_str or (is_pc and not has_android):
+            selected = get_random_ua()
+            self.log(f"已自动切换为移动端 UA")
+            return selected
+        return ua_str
+
     def _build_session(self) -> requests.Session:
+        """使用带重试的 Session，避免偶发 5xx/429 导致流程中断。"""
         session = requests.Session()
         retries = Retry(total=3, backoff_factor=0.5, status_forcelist=[429, 500, 502, 503, 504])
         adapter = HTTPAdapter(max_retries=retries)
@@ -66,18 +93,21 @@ class PangGuaiRunner:
         return session
 
     def sign_android(self, timestamp: str, url: str) -> str:
+        """生成安卓渠道签名，规则与参考脚本一致。"""
         return sha256_encrypt(
             "appSecret=nFU9pbG8YQoAe1kFh+E7eyrdlSLglwEJeA0wwHB1j5o=&channel=android_app"
             f"&timestamp={timestamp}&token={self.token}&version=1.60.3&{url[25:]}"
         )
 
     def sign_alipay(self, timestamp: str, url: str) -> str:
+        """生成支付宝渠道签名。"""
         return sha256_encrypt(
             "appSecret=Ew+ZSuppXZoA9YzBHgHmRvzt0Bw1CpwlQQtSl49QNhY=&channel=alipay"
             f"&timestamp={timestamp}&token={self.token}&version=1.60.3&{url[25:]}"
         )
 
     def httprequests(self, url: str, data: Optional[Dict[str, str]] = None, method: str = "post") -> Optional[dict]:
+        """统一封装 HTTP 请求：带签名、UA、超时和简单错误处理。"""
         t = str(int(time.time() * 1000))
         sign = self.sign_android(t, url)
         headers = {
@@ -122,6 +152,7 @@ class PangGuaiRunner:
         return None
 
     def balance(self) -> int:
+        """获取积分余额，便于统计收益。"""
         url = "https://userapi.qiekj.com/user/balance"
         res = self.httprequests(url=url, data={"token": self.token}, method="post")
         if res and res.get("code") == 0:
@@ -143,6 +174,7 @@ class PangGuaiRunner:
             self.log(f"签到出错: {res}")
 
     def sy(self) -> None:
+        """首页上滑任务，完成后获得定时积分。"""
         url = "https://userapi.qiekj.com/task/queryByType"
         res = self.httprequests(url=url, data={"taskCode": "8b475b42-df8b-4039-b4c1-f9a0174a611a", "token": self.token}, method="post")
         if res and res.get("code") == 0 and res.get("data") is True:
@@ -150,12 +182,27 @@ class PangGuaiRunner:
         else:
             self.log("首页浏览失败")
 
+    def solt(self) -> None:
+        """调用屏蔽查询接口，保持参考脚本中的步骤。"""
+        url = "https://userapi.qiekj.com/shielding/query"
+        res = self.httprequests(
+            url=url,
+            data={"shieldingResourceType": "1", "token": self.token},
+            method="post",
+        )
+        if res:
+            self.log("屏蔽查询完成")
+        else:
+            self.log("屏蔽查询失败，继续执行后续任务")
+
     def tx(self, task_code: str) -> bool:
+        """执行普通任务项。"""
         url = "https://userapi.qiekj.com/task/completed"
         res = self.httprequests(url=url, data={"taskCode": task_code, "token": self.token}, method="post")
         return bool(res and res.get("code") == 0 and res.get("data") is True)
 
     def appvideo(self, i: int) -> bool:
+        """APP 视频任务，每次成功加积分。"""
         url = "https://userapi.qiekj.com/task/completed"
         res = self.httprequests(url=url, data={"taskCode": 2, "token": self.token}, method="post")
         if res and res.get("code") == 0 and res.get("data") is True:
@@ -164,6 +211,7 @@ class PangGuaiRunner:
         return False
 
     def zfbtask(self, i: int, timestamp: str) -> bool:
+        """支付宝渠道视频任务，需使用不同签名。"""
         url = "https://userapi.qiekj.com/task/completed"
         sign = self.sign_alipay(timestamp, url)
         headers = {
@@ -190,6 +238,7 @@ class PangGuaiRunner:
         return False
 
     def get_tasks(self) -> list:
+        """拉取任务列表，过滤已完成项。"""
         url = "https://userapi.qiekj.com/task/list"
         res = self.httprequests(url=url, data={"token": self.token}, method="post")
         if res and res.get("code") == 0:
@@ -202,16 +251,28 @@ class PangGuaiRunner:
         username = None
         start_balance = 0
         try:
+            # 1. 读取基础信息，记录开始积分
             username = self.get_username()
             start_balance = self.balance()
             self.log(f"开始执行任务，当前积分 {start_balance}")
+            time.sleep(1)
 
+            # 2. 签到 + 屏蔽查询 + 首屏任务，与参考脚本顺序一致
             self._check_stop()
             self.qd()
+            time.sleep(1)
+
+            self._check_stop()
+            self.solt()
+            self.log("3s后开始执行任务")
+            time.sleep(3)
+
             self._check_stop()
             self.sy()
+            time.sleep(1)
             self._check_stop()
 
+            # 3. 遍历任务列表，逐项执行；失败会重试下一次，不中断循环
             tasks = self.get_tasks()
             for item in tasks:
                 self._check_stop()
@@ -221,13 +282,13 @@ class PangGuaiRunner:
                     for _ in range(item.get("dailyTaskLimit", 1)):
                         self._check_stop()
                         ok = self.tx(task_code=item["taskCode"])
-                        time.sleep(2)
                         if not ok:
-                            self.log(f"{title} 执行出错，跳过")
-                            break
+                            self.log(f"{title} 执行出错，重试下一次")
+                        time.sleep(10)
                     self.log(f"{title} 完成")
-                    time.sleep(1)
+                    time.sleep(5)
 
+            # 4. 视频任务（APP + 支付宝），保持参考脚本的次数与间隔
             if self.options.video:
                 for num in range(20):
                     self._check_stop()
@@ -248,6 +309,8 @@ class PangGuaiRunner:
         except Exception as e:
             self.log(f"任务异常中断: {e}")
 
+        # 5. 结束收尾：等 3s，重新查询积分并计算本次收益
+        time.sleep(3)
         end_balance = self.balance()
         gain = end_balance - start_balance
         self.log(f"任务结束，最新积分 {end_balance}，本次获得 {gain}")

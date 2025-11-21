@@ -19,24 +19,27 @@ from pydantic import BaseModel, Field
 from task_engine import PangGuaiRunner, RunOptions
 
 
+# 基础配置/状态容器
 BASE_DIR = Path(__file__).resolve().parent
 DB_PATH = BASE_DIR / "database.db"
-MAIN_LOOP: Optional[asyncio.AbstractEventLoop] = None
-EXECUTOR = ThreadPoolExecutor(max_workers=20)
-LOG_SUBSCRIBERS: dict[int, set[WebSocket]] = {}
-LOG_HISTORY: dict[int, list[str]] = {}
+MAIN_LOOP: Optional[asyncio.AbstractEventLoop] = None  # WebSocket 推送依赖的事件循环
+EXECUTOR = ThreadPoolExecutor(max_workers=20)  # 后台任务线程池
+LOG_SUBSCRIBERS: dict[int, set[WebSocket]] = {}  # uid -> websocket 集合
+LOG_HISTORY: dict[int, list[str]] = {}  # uid -> 最近日志
 LOG_LOCK = Lock()
 PASSWORD_SALT = os.getenv("PANGGUAI_PASSWORD_SALT", "pangguai_salt_v1")
-ACTIVE_RUNNERS: dict[str, PangGuaiRunner] = {}
+ACTIVE_RUNNERS: dict[str, PangGuaiRunner] = {}  # task_id -> Runner 实例
 
 
 def get_db_connection() -> sqlite3.Connection:
+    """获取 SQLite 连接，开启 row_factory 方便字段访问。"""
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     return conn
 
 
 def init_db() -> None:
+    """初始化核心表结构，并尝试做向前兼容的列补齐。"""
     with get_db_connection() as conn:
         conn.execute("PRAGMA journal_mode=WAL;")
         conn.execute(
@@ -119,6 +122,7 @@ def verify_password(password: str, stored_hash: str) -> bool:
 
 
 def create_session(user_id: int, ttl_seconds: int = 60 * 60 * 4) -> str:
+    """生成持久化 Session，默认 4 小时有效。"""
     token = str(uuid.uuid4())
     now = int(time.time())
     expire_at = now + ttl_seconds
@@ -132,6 +136,7 @@ def create_session(user_id: int, ttl_seconds: int = 60 * 60 * 4) -> str:
 
 
 def get_user_by_token(auth_header: Optional[str]) -> sqlite3.Row:
+    """从 Authorization 提取会话并校验有效性，不存在则抛 401。"""
     if not auth_header:
         raise HTTPException(status_code=401, detail="Authorization header missing")
     # Support "Bearer <token>" or raw token
@@ -174,6 +179,7 @@ def push_log(user_id: int, message: str) -> None:
 
 
 def get_user_row(user_id: int) -> sqlite3.Row:
+    """便捷查询用户，不存在直接 404。"""
     with get_db_connection() as conn:
         cursor = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,))
         row = cursor.fetchone()
@@ -325,6 +331,7 @@ def require_user(authorization: Optional[str] = Header(None)) -> sqlite3.Row:
 
 
 def current_task_status(user_id: int) -> str:
+    """读取用户最近一次任务状态，给状态轮询使用。"""
     with get_db_connection() as conn:
         cursor = conn.execute(
             "SELECT status FROM tasks WHERE user_id = ? ORDER BY updated_at DESC LIMIT 1",
@@ -350,6 +357,7 @@ def create_task(
     body: TaskCreate,
     user=Depends(require_user),
 ) -> TaskResponse:
+    """手动新建任务（未使用验证码登录的兜底入口）。"""
     task_id = str(uuid.uuid4())
     now = int(time.time())
     with get_db_connection() as conn:
@@ -385,6 +393,7 @@ def api_task_start(
     options: TaskOptions,
     user=Depends(require_user),
 ) -> TaskResponse:
+    """Dashboard 启动任务：复用当天任务记录并更新 token/UA。"""
     if current_task_status(user["id"]) == "running":
         raise HTTPException(status_code=400, detail="任务正在运行中，请勿重复提交")
     user_row = get_user_row(user["id"])
@@ -486,6 +495,7 @@ def retry_task(
     task_id: str,
     user=Depends(require_user),
 ) -> TaskResponse:
+    """重试任务：置为 pending 并清空错误字段。"""
     now = int(time.time())
     with get_db_connection() as conn:
         cursor = conn.execute(
@@ -540,6 +550,7 @@ def run_task_job(task_id: str, user_id: int) -> None:
             opts_dict = {}
     options = RunOptions(**opts_dict)
 
+    # 组装 Runner 并记录到 ACTIVE_RUNNERS，便于 stop 指令生效
     runner = PangGuaiRunner(
         token=task_row["token"],
         ua=task_row["ua"],
@@ -580,6 +591,7 @@ def run_task_job(task_id: str, user_id: int) -> None:
 
 
 def fail_task(task_id: str, user_id: int, message: str) -> None:
+    """统一失败处理：落库状态 + 推送日志。"""
     now = int(time.time())
     with get_db_connection() as conn:
         conn.execute(

@@ -1,6 +1,8 @@
 const API_BASE = window.PANGGUAI_API_BASE || "http://localhost:8000";
 const STORAGE_KEY = "pangguai_session";
 const UID_KEY = "pangguai_uid";
+// 使用较新的红米 Note 机型 UA 作为默认展示。
+const DEFAULT_ANDROID_UA = "Mozilla/5.0 (Linux; Android 13; 23049RAD8C) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Mobile Safari/537.36";
 const $ = (selector) => document.querySelector(selector);
 
 function persistSession(token, uid) {
@@ -63,31 +65,6 @@ function maskValue(val) {
   return `${val.slice(0, 4)}…${val.slice(-3)}`;
 }
 
-function copy(text) {
-  if (!text) return;
-  const fallbackCopy = () => {
-    const textarea = document.createElement("textarea");
-    textarea.value = text;
-    textarea.style.position = "fixed";
-    textarea.style.opacity = "0";
-    document.body.appendChild(textarea);
-    textarea.select();
-    try {
-      document.execCommand("copy");
-      alert("已复制");
-    } catch (err) {
-      alert("复制失败，请手动选择复制");
-    } finally {
-      document.body.removeChild(textarea);
-    }
-  };
-  if (navigator.clipboard && window.isSecureContext) {
-    navigator.clipboard.writeText(text).then(() => alert("已复制")).catch(fallbackCopy);
-  } else {
-    fallbackCopy();
-  }
-}
-
 function looksLikeToken(val) {
   return typeof val === "string" && /[A-Za-z0-9_-]{20,}/.test(val);
 }
@@ -117,6 +94,17 @@ function extractTokenFromPayload(payload, depth = 0) {
   return null;
 }
 
+function getSafeUA(inputUA) {
+  const ua = (inputUA || navigator.userAgent || "").trim();
+  const lower = ua.toLowerCase();
+  const isPc = lower.includes("windows") || lower.includes("macintosh") || lower.includes("mac os");
+  const hasAndroid = lower.includes("android");
+  if (!ua || (isPc && !hasAndroid)) {
+    return DEFAULT_ANDROID_UA;
+  }
+  return ua;
+}
+
 // Auth page
 function initAuthPage() {
   if (getToken()) {
@@ -132,7 +120,7 @@ function initAuthPage() {
   const loginBtn = $("#loginBtn");
 
   if (uaTextarea && !uaTextarea.value) {
-    uaTextarea.value = navigator.userAgent;
+    uaTextarea.value = getSafeUA();
   }
 
   let lastReportedToken = "";
@@ -169,7 +157,7 @@ function initAuthPage() {
     }
     if (!silent) setMessage(messageEl, "上报中…");
     try {
-      const payload = { phone, token, ua: ua || navigator.userAgent };
+      const payload = { phone, token, ua: getSafeUA(ua || uaTextarea?.value) };
       const res = await api("/api/login", { method: "POST", body: JSON.stringify(payload) });
       persistSession(res.data.session_token, res.data.uid);
       if (!silent) {
@@ -189,7 +177,7 @@ function initAuthPage() {
 
   function autoReportToken(token, source = "auto") {
     const phone = phoneInput?.value.trim();
-    const ua = uaTextarea?.value.trim() || navigator.userAgent;
+    const ua = getSafeUA(uaTextarea?.value);
     if (!looksLikeToken(token) || !/^1[3-9]\d{9}$/.test(phone || "")) return;
     if (token === lastReportedToken) return;
     lastReportedToken = token;
@@ -197,46 +185,46 @@ function initAuthPage() {
     handleTokenLogin(phone, token, ua, true);
   }
 
-function attachTokenCapture() {
-  if (window.axios && !window.__PG_TOKEN_INTERCEPTOR) {
-    window.__PG_TOKEN_INTERCEPTOR = true;
+  function attachTokenCapture() {
+    if (window.axios && !window.__PG_TOKEN_INTERCEPTOR) {
+      window.__PG_TOKEN_INTERCEPTOR = true;
 
-    window.axios.interceptors.response.use(
-      (res) => {
-        // 捕获 Token（成功逻辑）
-        let token = null;
-        if (res.data && res.data.token) token = res.data.token;
-        if (res.data && res.data.data && res.data.data.token) token = res.data.data.token;
-        if (token && looksLikeToken(token)) {
-          autoReportToken(token, "接口自动捕获");
-        }
+      window.axios.interceptors.response.use(
+        (res) => {
+          // 捕获 Token（成功逻辑）
+          let token = null;
+          if (res.data && res.data.token) token = res.data.token;
+          if (res.data && res.data.data && res.data.data.token) token = res.data.data.token;
+          if (token && looksLikeToken(token)) {
+            autoReportToken(token, "接口自动捕获");
+          }
 
-        // 捕获业务错误（如验证码错误）
-        if (res.data && res.data.code !== undefined && res.data.code !== 0) {
-          const errorMsg = res.data.msg || "未知错误";
-          setMessage($("#auth-message"), `验证失败: ${errorMsg}`, "error");
+          // 捕获业务错误（如验证码错误）
+          if (res.data && res.data.code !== undefined && res.data.code !== 0) {
+            const errorMsg = res.data.msg || "未知错误";
+            setMessage($("#auth-message"), `验证失败: ${errorMsg}`, "error");
+            const btn = $("#loginBtn");
+            if (btn) {
+              btn.disabled = false;
+              btn.textContent = "验证码登录并托管";
+            }
+          }
+          return res;
+        },
+        (error) => {
+          // 捕获网络层面的错误
+          const msg = error.response?.data?.msg || error.message || "网络请求异常";
+          setMessage($("#auth-message"), `请求出错: ${msg}`, "error");
           const btn = $("#loginBtn");
           if (btn) {
             btn.disabled = false;
             btn.textContent = "验证码登录并托管";
           }
-        }
-        return res;
-      },
-      (error) => {
-        // 捕获网络层面的错误
-        const msg = error.response?.data?.msg || error.message || "网络请求异常";
-        setMessage($("#auth-message"), `请求出错: ${msg}`, "error");
-        const btn = $("#loginBtn");
-        if (btn) {
-          btn.disabled = false;
-          btn.textContent = "验证码登录并托管";
-        }
-        return Promise.reject(error);
-      },
-    );
+          return Promise.reject(error);
+        },
+      );
+    }
   }
-}
 
   sendCodeBtn?.addEventListener("click", (e) => {
     e.preventDefault();
@@ -286,10 +274,11 @@ function attachTokenCapture() {
 
   // 暴露给 jsjiami 脚本调用
   window.reportTokenLogin = async ({ phone, token, ua }) => {
-    await handleTokenLogin(phone, token, ua || uaTextarea?.value || navigator.userAgent);
+    const safeUA = getSafeUA(ua || uaTextarea?.value);
+    await handleTokenLogin(phone, token, safeUA);
   };
 
-  attachTokenCapture();
+  return { attachTokenCapture };
 }
 
 // Dashboard page
@@ -451,6 +440,9 @@ function initDashboardPage() {
 
 document.addEventListener("DOMContentLoaded", () => {
   const page = document.body.dataset.page;
-  if (page === "auth") initAuthPage();
+  if (page === "auth") {
+    const helpers = initAuthPage();
+    helpers?.attachTokenCapture?.();
+  }
   if (page === "dashboard") initDashboardPage();
 });
