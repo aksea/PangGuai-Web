@@ -1,13 +1,33 @@
 # OS/Editor
 .DS_Store
+.idea/
+.vscode/
 
 # Python caches
 __pycache__/
 *.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 
 # SQLite database files
-backend/database.db
 backend/database.db*
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
 
 # Runtime logs
 backend/logs/
+*.log
+
+# Environments
+.env
+.venv/
+venv/
+
+# Node / frontend
+node_modules/
+dist/
+build/
