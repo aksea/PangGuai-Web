@@ -6,6 +6,7 @@ __pycache__/
 *.pyc
 
 # SQLite database files
+backend/database.db
 backend/database.db*
 
 # Runtime logs
