@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PangGuai 控制台 · 登录</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
+  <script src="https://unpkg.com/axios@1.6.2/dist/axios.min.js"></script>
+  <script src="crypto_logic.js"></script>
+</head>
+<body class="page-auth" data-page="auth">
+  <div class="bg-grid"></div>
+  <div class="auth-shell">
+    <div class="auth-card">
+      <div class="brand">
+        <div class="logo-circle">PG</div>
+        <div>
+          <h1>PangGuai Cloud</h1>
+          <p>自动化积分托管助手</p>
+        </div>
+      </div>
+
+      <form id="sms-login-form" class="auth-form">
+        <div class="field">
+          <label for="phoneInput">手机号</label>
+          <input id="phoneInput" name="phone" maxlength="11" placeholder="请输入11位手机号" required>
+        </div>
+
+        <div class="field">
+          <label for="verifyInput">验证码</label>
+          <div class="verify-row">
+            <input id="verifyInput" name="verify" placeholder="6位数字" maxlength="6" required>
+            <button id="sendCodeBtn" type="button" class="btn ghost">获取验证码</button>
+          </div>
+        </div>
+
+        <details class="advanced-options">
+          <summary>高级设置 (UA)</summary>
+          <div class="field">
+            <textarea id="ua" name="ua" rows="2" placeholder="User-Agent"></textarea>
+          </div>
+        </details>
+
+        <button id="loginBtn" type="submit" class="btn primary">登录并自动托管</button>
+
+        <p class="helper">
+          点击登录后，系统将自动获取 Token 并开始云端执行任务。<br>
+          无需保持网页开启。
+        </p>
+      </form>
+
+      <div style="display: none;">
+        <div id="responseDisplay"></div>
+        <div id="uploadStatus"></div>
+      </div>
+      <div id="auth-message" class="message"></div>
+    </div>
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>

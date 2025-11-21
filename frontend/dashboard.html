@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PangGuai 控制台</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body class="page-dashboard" data-page="dashboard">
+  <header class="topbar">
+    <div class="brand brand-inline">
+      <div class="logo-circle logo-sm">PG</div>
+      <h1 class="topbar-title">控制台</h1>
+    </div>
+    <div class="topbar-actions">
+      <button id="logout-btn" class="btn ghost topbar-btn">退出账号</button>
+    </div>
+  </header>
+
+  <main class="dashboard-layout">
+    <section class="panel status-panel">
+      <div class="user-card-header">
+        <div class="avatar" style="font-size: 48px; margin-bottom: 10px;">🤠</div>
+        <h2 id="user-nick" style="font-size: 18px; margin:0; color:var(--text-main);">加载中...</h2>
+        <p style="color:var(--text-muted); font-size:14px; margin:5px 0;">
+          积分: <span id="user-points" style="color:var(--accent); font-weight:bold; font-size:16px;">---</span>
+        </p>
+        <div id="task-state" class="pill">检测中</div>
+      </div>
+
+      <div class="control-area">
+        <div>
+          <label style="display:block; margin-bottom:10px;">今日任务配置</label>
+          <div style="background: #f8fafc; border-radius: 12px; padding: 16px; border: 1px solid var(--panel-border);">
+            <label class="checkbox-label" style="display:flex; align-items:center; margin-bottom:12px; cursor:pointer;">
+              <input type="checkbox" id="opt-video" checked style="width:18px; margin-right:10px;">
+              <span>自动刷视频 (20次)</span>
+            </label>
+            <label class="checkbox-label" style="display:flex; align-items:center; cursor:pointer;">
+              <input type="checkbox" id="opt-alipay" checked style="width:18px; margin-right:10px;">
+              <span>支付宝任务 (50次)</span>
+            </label>
+          </div>
+        </div>
+
+        <div class="btn-group" style="margin-top:auto; display:flex; gap:10px;">
+          <button id="start-task" class="btn primary" style="flex:1;">
+            🚀 开始执行任务
+          </button>
+          <button id="stop-task" class="btn ghost" style="color:var(--danger); border-color:var(--danger); display:none;">
+            ⏹ 停止
+          </button>
+        </div>
+        <div id="task-message" class="message"></div>
+      </div>
+    </section>
+
+    <section class="panel log-panel">
+      <div class="log-header">
+        <span>运行日志 (Real-time)</span>
+        <div class="status-dot">
+          <span id="ws-status-text">连接中...</span>
+          <div id="ws-dot" class="dot"></div>
+        </div>
+      </div>
+      <div class="log-box" id="log-box">
+      </div>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

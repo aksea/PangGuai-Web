@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>胖乖生活获取token</title>
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600&display=swap" rel="stylesheet">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: 'Poppins', sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+        .page-container {
+            display: flex;
+            gap: 20px;
+            justify-content: center;
+            width: 100%;
+            max-width: 1000px;
+        }
+        .container {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border-radius: 20px;
+            padding: 40px;
+            box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.37);
+            width: 100%;
+            max-width: 400px;
+        }
+        h2 {
+            color: #ffffff;
+            text-align: center;
+            margin-bottom: 30px;
+            font-weight: 600;
+        }
+        .input-group {
+            margin-bottom: 20px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            color: #ffffff;
+            font-size: 14px;
+        }
+        input, select {
+            width: 100%;
+            padding: 10px;
+            border: none;
+            border-radius: 5px;
+            background: rgba(255, 255, 255, 0.2);
+            color: #ffffff;
+            font-size: 16px;
+        }
+        input::placeholder {
+            color: rgba(255, 255, 255, 0.7);
+        }
+        button {
+            width: 100%;
+            padding: 12px;
+            border: none;
+            border-radius: 5px;
+            background: #4CAF50;
+            color: white;
+            font-size: 16px;
+            cursor: pointer;
+            transition: background 0.3s ease;
+            margin-bottom: 10px;
+        }
+        button:hover {
+            background: #45a049;
+        }
+        button:disabled {
+            background: #cccccc;
+            cursor: not-allowed;
+        }
+        .display-container {
+            margin-top: 20px;
+        }
+        #responseDisplay, #integralDisplay {
+            margin-top: 10px;
+            padding: 10px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 5px;
+            color: #ffffff;
+            font-size: 14px;
+            word-break: break-all;
+        }
+        #uploadStatus {
+            margin-top: 10px;
+            padding: 10px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 5px;
+            color: #ffffff;
+            font-size: 14px;
+            text-align: center;
+        }
+        .status-success { color: #4CAF50; }
+        .status-warning { color: #FFA500; }
+        .status-error { color: #FF6B6B; }
+        .token-label {
+            display: block;
+            margin-bottom: 5px;
+            color: #ffffff;
+            font-size: 14px;
+            font-weight: bold;
+        }
+        .integral-record {
+            padding: 10px;
+            margin-top: 10px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+        }
+        .integral-record:last-child {
+            border-bottom: none;
+        }
+        .total-integral {
+            font-size: 18px;
+            font-weight: bold;
+            margin-bottom: 15px;
+            color: #4CAF50;
+        }
+        .sponsor {
+            text-align: center;
+            margin-top: 30px;
+            font-size: 12px;
+            color: rgba(255, 255, 255, 0.7);
+        }
+        .sponsor a {
+            color: #ffffff;
+            text-decoration: none;
+        }
+        .sponsor a:hover {
+            text-decoration: underline;
+        }
+        /* 添加新的样式 */
+        .sponsor-buttons {
+            display: flex;
+            flex-direction: row;
+            gap: 15px;
+            margin-bottom: 20px;
+            width: 100%;
+        }
+
+        .sponsor-button {
+            flex: 1;
+            padding: 12px;
+            background: linear-gradient(135deg, #4CAF50, #45a049);
+            color: white;
+            text-decoration: none;
+            border-radius: 5px;
+            text-align: center;
+            transition: all 0.3s ease;
+            font-size: 14px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+
+        .sponsor-button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 10px rgba(0,0,0,0.2);
+        }
+
+        .page-container {
+            display: flex;
+            flex-direction: row;
+            flex-wrap: wrap;
+            gap: 20px;
+            padding: 20px;
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .container {
+            flex: 1;
+            min-width: 300px;
+        }
+        
+        .note-section {
+            margin-top: 10px; 
+            margin-bottom: 10px; 
+            font-size: 12px; 
+            color: #ffffff; 
+            opacity: 0.8;
+        }
+        
+        /* 移动端适配 */
+        @media (max-width: 768px) {
+            .sponsor-buttons {
+                flex-direction: column;
+            }
+
+            .page-container {
+                flex-direction: column;
+            }
+
+            .container {
+                width: 100%;
+            }
+
+            .sponsor-button {
+                width: 100%;
+                margin-bottom: 10px;
+            }
+        }
+    </style>
+</head>
+<body>
+        <!-- 左侧Token获取部分 -->
+        <div class="container">
+            <h2>某乖生活取Token</h2>
+            <div class="input-group">
+                <label for="phoneInput">手机号:</label>
+                <input type="text" id="phoneInput" name="phone" placeholder="请输入手机号">
+            </div>
+            <div class="input-group">
+                <label for="verifyInput">验证码:</label>
+                <input type="text" id="verifyInput" name="verify" placeholder="请输入验证码">
+            </div>
+            <div class="input-group">
+                <label for="scriptSelector">选择端口:</label>
+                <select id="scriptSelector" onchange="loadScript()">
+                    <option value="app" selected>默认端口</option>
+                </select>
+            </div>
+            <button id="sendCodeBtn" onclick="sendPostRequest()">发送验证码</button>
+            <button onclick="verifyCode()">登录</button>
+            <button onclick="copy()">复制Token</button>
+            
+            <div class="display-container">
+                <div class="token-section">
+                    <span class="token-label">Token信息:</span>
+                    <div id="responseDisplay"></div>
+                </div>
+                <div class="upload-section">
+                    <div id="uploadStatus"></div>
+                </div>
+            </div>
+
+        
+
+        <!-- 右侧积分查询部分 -->
+        <div class="container">
+            <h2>积分查询系统</h2>
+            <div class="input-group">
+                <label for="queryToken">Token:</label>
+                <input type="text" id="queryToken" placeholder="输入或粘贴Token">
+            </div>
+            <button onclick="checkIntegral()">查询积分</button>
+            
+            <div class="display-container">
+                <div id="integralDisplay"></div>
+            </div>
+        </div>
+
+</div>
+        
+        
+
+    <script src="https://unpkg.com/axios@1.6.2/dist/axios.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
