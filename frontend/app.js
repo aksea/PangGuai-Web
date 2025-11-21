@@ -40,6 +40,10 @@ async function api(path, options = {}) {
   }
   const res = await fetch(`${API_BASE}${path}`, { ...options, headers });
   if (!res.ok) {
+    if (res.status === 401) {
+      clearToken();
+      redirectToLogin();
+    }
     const data = await res.json().catch(() => ({}));
     throw new Error(data.detail || data.message || `请求失败 (${res.status})`);
   }

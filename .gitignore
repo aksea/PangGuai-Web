@@ -1,0 +1,12 @@
+# OS/Editor
+.DS_Store
+
+# Python caches
+__pycache__/
+*.pyc
+
+# SQLite database files
+backend/database.db*
+
+# Runtime logs
+backend/logs/

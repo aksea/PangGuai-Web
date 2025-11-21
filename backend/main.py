@@ -16,7 +16,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, WebSocket, WebSocke
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-from task_engine import PangGuaiRunner, RunOptions
+from task_engine import PangGuaiRunner, RunOptions, get_random_ua
 
 
 # 基础配置/状态容器
@@ -29,6 +29,7 @@ LOG_HISTORY: dict[int, list[str]] = {}  # uid -> 最近日志
 LOG_LOCK = Lock()
 PASSWORD_SALT = os.getenv("PANGGUAI_PASSWORD_SALT", "pangguai_salt_v1")
 ACTIVE_RUNNERS: dict[str, PangGuaiRunner] = {}  # task_id -> Runner 实例
+LOG_DIR = BASE_DIR / "logs"
 
 
 def get_db_connection() -> sqlite3.Connection:
@@ -287,9 +288,20 @@ def login(body: LoginForm) -> dict:
 def api_login(body: LoginReport) -> dict:
     """前端上报 phone + token + ua，返回 uid + 会话令牌，并同步积分。"""
     now = int(time.time())
+    final_ua = body.ua or ""
+    lower_ua = final_ua.lower()
+    # 如果前端传了 PC UA，尝试沿用旧 UA，否则生成一次新的移动 UA 并固定下来
+    is_pc_ua = ("windows" in lower_ua) or ("macintosh" in lower_ua) or ("mac os" in lower_ua)
+    with get_db_connection() as conn:
+        existing_row = conn.execute("SELECT ua FROM users WHERE phone = ?", (body.phone,)).fetchone()
+    if is_pc_ua:
+        if existing_row and existing_row["ua"] and "android" in existing_row["ua"].lower():
+            final_ua = existing_row["ua"]
+        else:
+            final_ua = get_random_ua()
 
     # 同步查询当前积分与昵称，提升前端反馈
-    temp_runner = PangGuaiRunner(token=body.token, ua=body.ua)
+    temp_runner = PangGuaiRunner(token=body.token, ua=final_ua)
     current_integral = 0
     current_nick = None
     try:
@@ -310,7 +322,7 @@ def api_login(body: LoginReport) -> dict:
                     integral_balance = COALESCE(?, integral_balance), nick = COALESCE(?, nick)
                 WHERE id = ?
                 """,
-                (body.token, body.ua, now, current_integral, current_nick, user_id),
+                (body.token, final_ua, now, current_integral, current_nick, user_id),
             )
         else:
             conn.execute(
@@ -318,7 +330,7 @@ def api_login(body: LoginReport) -> dict:
                 INSERT INTO users (username, password_hash, created_at, phone, token, ua, status, updated_at, integral_balance, nick)
                 VALUES (?, '', ?, ?, ?, ?, 1, ?, ?, ?)
                 """,
-                (body.phone, now, body.phone, body.token, body.ua, now, current_integral, current_nick),
+                (body.phone, now, body.phone, body.token, final_ua, now, current_integral, current_nick),
             )
             user_id = conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"]
         conn.commit()
@@ -550,12 +562,33 @@ def run_task_job(task_id: str, user_id: int) -> None:
             opts_dict = {}
     options = RunOptions(**opts_dict)
 
+    # 准备本地日志文件（logs/<uid>/<timestamp>_<task_id>.log）
+    LOG_DIR.mkdir(exist_ok=True)
+    user_log_dir = LOG_DIR / str(user_id)
+    user_log_dir.mkdir(parents=True, exist_ok=True)
+    timestamp = time.strftime("%Y%m%d_%H%M%S", time.localtime())
+    log_path = user_log_dir / f"{timestamp}_{task_id}.log"
+
+    def log_line(message: str) -> None:
+        # 控制台/WS 推送
+        push_log(user_id, message)
+        # 持久化到文件
+        try:
+            line = f"[{time.strftime('%H:%M:%S')}] {message}\n"
+            with log_path.open("a", encoding="utf-8") as f:
+                f.write(line)
+        except Exception:
+            # 文件写入失败时不阻断流程，避免影响任务执行
+            pass
+
+    log_line(f"日志文件: {log_path}")
+
     # 组装 Runner 并记录到 ACTIVE_RUNNERS，便于 stop 指令生效
     runner = PangGuaiRunner(
         token=task_row["token"],
         ua=task_row["ua"],
         options=options,
-        logger=lambda msg: push_log(user_id, msg),
+        logger=log_line,
     )
     ACTIVE_RUNNERS[task_id] = runner
 

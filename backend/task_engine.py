@@ -54,7 +54,7 @@ class PangGuaiRunner:
         self.options = options or RunOptions()
         self.log = logger or (lambda msg: None)
         self.stop_flag = False
-        self.notfin = {
+        self.excluded_task_codes = {
             "7328b1db-d001-4e6a-a9e6-6ae8d281ddbf",
             "e8f837b8-4317-4bf5-89ca-99f809bf9041",
             "65a4e35d-c8ae-4732-adb7-30f8788f2ea7",
@@ -121,6 +121,10 @@ class PangGuaiRunner:
             "Host": "userapi.qiekj.com",
             "Connection": "Keep-Alive",
             "Accept-Encoding": "gzip",
+            "Origin": "https://userapi.qiekj.com",
+            "X-Requested-With": "com.qiekj.user",
+            "Sec-Fetch-Site": "same-origin",
+            "Sec-Fetch-Mode": "cors",
             "User-Agent": self.ua,
         }
         try:
@@ -129,11 +133,12 @@ class PangGuaiRunner:
             else:
                 res = self.session.post(url=url, headers=headers, data=data, timeout=10)
             if res.status_code != 200:
-                self.log(f"请求出错 {res.status_code}")
+                self.log(f"[HTTP {method}] {url} 状态码 {res.status_code}，响应: {res.text}")
                 return None
             res_json = res.json()
             if res_json.get("msg") == "未登录":
                 raise RuntimeError("Token 失效，请重新登录")
+            self.log(f"[HTTP {method}] {url} 返回: {res_json}")
             return res_json
         except Exception as exc:
             self.log(f"请求异常: {exc}")
@@ -159,7 +164,7 @@ class PangGuaiRunner:
             return int(res["data"]["integral"])
         return 0
 
-    def qd(self) -> None:
+    def do_signin(self) -> None:
         url = "https://userapi.qiekj.com/signin/doUserSignIn"
         res = self.httprequests(url=url, data={"activityId": "600001", "token": self.token}, method="post")
         if not res:
@@ -173,7 +178,7 @@ class PangGuaiRunner:
         else:
             self.log(f"签到出错: {res}")
 
-    def sy(self) -> None:
+    def home_browse(self) -> None:
         """首页上滑任务，完成后获得定时积分。"""
         url = "https://userapi.qiekj.com/task/queryByType"
         res = self.httprequests(url=url, data={"taskCode": "8b475b42-df8b-4039-b4c1-f9a0174a611a", "token": self.token}, method="post")
@@ -182,7 +187,7 @@ class PangGuaiRunner:
         else:
             self.log("首页浏览失败")
 
-    def solt(self) -> None:
+    def shielding_query(self) -> None:
         """调用屏蔽查询接口，保持参考脚本中的步骤。"""
         url = "https://userapi.qiekj.com/shielding/query"
         res = self.httprequests(
@@ -196,21 +201,40 @@ class PangGuaiRunner:
             self.log("屏蔽查询失败，继续执行后续任务")
 
     def tx(self, task_code: str) -> bool:
-        """执行普通任务项。"""
+        """执行普通任务项（兼容旧命名，推荐使用 complete_task_detail）。"""
         url = "https://userapi.qiekj.com/task/completed"
         res = self.httprequests(url=url, data={"taskCode": task_code, "token": self.token}, method="post")
         return bool(res and res.get("code") == 0 and res.get("data") is True)
 
-    def appvideo(self, i: int) -> bool:
-        """APP 视频任务，每次成功加积分。"""
+    def complete_task_detail(self, task_code: str) -> dict:
+        """执行任务并返回详细结果，用于更精细的控制与熔断。"""
+        url = "https://userapi.qiekj.com/task/completed"
+        res = self.httprequests(url=url, data={"taskCode": task_code, "token": self.token}, method="post")
+        if not res:
+            return {"success": False, "code": -999, "stop": False}
+        if res.get("code") == 0 and res.get("data") is True:
+            return {"success": True, "code": 0, "stop": False}
+        if res.get("code") == -1:
+            return {"success": False, "code": -1, "stop": True}
+        # 其他失败（如 data=False 或其他 code）
+        return {"success": False, "code": res.get("code"), "stop": False, "data": res.get("data")}
+
+    def app_video_task(self, i: int) -> dict:
+        """APP 视频任务，每次成功加积分，返回 dict 以控制循环。"""
         url = "https://userapi.qiekj.com/task/completed"
         res = self.httprequests(url=url, data={"taskCode": 2, "token": self.token}, method="post")
-        if res and res.get("code") == 0 and res.get("data") is True:
+        if not res:
+            return {"success": False, "stop": False}
+        if res.get("code") == 0 and res.get("data") is True:
             self.log(f"第 {i} 次 APP 视频任务完成")
-            return True
-        return False
+            return {"success": True, "stop": False}
+        if res.get("code") == -1:
+            self.log("APP 视频任务已结束/失效，停止循环")
+            return {"success": False, "stop": True}
+        self.log(f"APP 视频任务第 {i} 次失败")
+        return {"success": False, "stop": False}
 
-    def zfbtask(self, i: int, timestamp: str) -> bool:
+    def alipay_video_task(self, i: int, timestamp: str) -> bool:
         """支付宝渠道视频任务，需使用不同签名。"""
         url = "https://userapi.qiekj.com/task/completed"
         sign = self.sign_alipay(timestamp, url)
@@ -259,50 +283,76 @@ class PangGuaiRunner:
 
             # 2. 签到 + 屏蔽查询 + 首屏任务，与参考脚本顺序一致
             self._check_stop()
-            self.qd()
+            self.do_signin()
             time.sleep(1)
 
             self._check_stop()
-            self.solt()
+            self.shielding_query()
             self.log("3s后开始执行任务")
             time.sleep(3)
 
             self._check_stop()
-            self.sy()
+            self.home_browse()
             time.sleep(1)
             self._check_stop()
 
-            # 3. 遍历任务列表，逐项执行；失败会重试下一次，不中断循环
+            # 3. 遍历任务列表，逐项执行；增加熔断与随机等待
             tasks = self.get_tasks()
             for item in tasks:
                 self._check_stop()
-                if item.get("completedStatus") == 0 and item.get("taskCode") not in self.notfin:
+                if item.get("completedStatus") == 0 and item.get("taskCode") not in self.excluded_task_codes:
                     title = item.get("title", "任务")
                     self.log(f"开始执行任务 —— {title}")
-                    for _ in range(item.get("dailyTaskLimit", 1)):
+                    consecutive_failures = 0
+                    limit = item.get("dailyTaskLimit", 1)
+                    if limit == -1:
+                        limit = 1
+                    task_type = item.get("type")
+                    for idx in range(limit):
                         self._check_stop()
-                        ok = self.tx(task_code=item["taskCode"])
-                        if not ok:
-                            self.log(f"{title} 执行出错，重试下一次")
-                        time.sleep(10)
-                    self.log(f"{title} 完成")
-                    time.sleep(5)
+                        result = self.complete_task_detail(task_code=item["taskCode"])
+                        if result["success"]:
+                            consecutive_failures = 0
+                            self.log(f"  > 第 {idx + 1} 次成功")
+                        else:
+                            consecutive_failures += 1
+                            if result["stop"]:
+                                self.log("  > 任务已结束/失效，跳过后续")
+                                break
+                            self.log(f"  > 第 {idx + 1} 次失败 (code={result.get('code')}, data={result.get('data')})")
+                            if consecutive_failures >= 3:
+                                self.log("  > ⚠️ 连续失败3次，跳过此任务")
+                                break
+                        if task_type == 606:
+                            wait_time = random.randint(18, 25)
+                            self.log(f"  > 广告任务，模拟观看 {wait_time} 秒...")
+                        elif task_type in [604, 605, 623, 7]:
+                            wait_time = random.randint(5, 8)
+                        else:
+                            wait_time = random.randint(8, 12)
+                        time.sleep(wait_time)
+                    self.log(f"{title} 阶段结束")
+                    time.sleep(2)
 
             # 4. 视频任务（APP + 支付宝），保持参考脚本的次数与间隔
             if self.options.video:
+                self.log("开始 APP 视频循环任务...")
                 for num in range(20):
                     self._check_stop()
-                    if not self.appvideo(i=num + 1):
+                    res = self.app_video_task(i=num + 1)
+                    if res.get("stop"):
                         break
-                    time.sleep(15)
+                    sleep_t = random.randint(16, 22)
+                    time.sleep(sleep_t)
 
             if self.options.alipay:
+                self.log("开始 支付宝 视频循环任务...")
                 for num in range(50):
                     self._check_stop()
                     t = str(int(time.time() * 1000))
-                    if not self.zfbtask(i=num + 1, timestamp=t):
-                        break
-                    time.sleep(15)
+                    if not self.alipay_video_task(i=num + 1, timestamp=t):
+                        self.log("支付宝任务失败，尝试继续")
+                    time.sleep(random.randint(16, 22))
 
         except InterruptedError as e:
             self.log(str(e))
