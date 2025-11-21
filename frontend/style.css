@@ -498,3 +498,88 @@ details.advanced-options summary:hover {
   background: #22c55e;
   box-shadow: 0 0 8px rgba(34, 197, 94, 0.6);
 }
+
+/* --- 数据库表格专用样式 --- */
+.table-wrapper {
+  flex: 1;
+  overflow: auto;
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  background: #fff;
+  margin-top: 12px;
+}
+
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.data-table thead {
+  position: sticky;
+  top: 0;
+  background: #f8fafc;
+  z-index: 1;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+}
+
+.data-table th,
+.data-table td {
+  padding: 12px 16px;
+  text-align: left;
+  border-bottom: 1px solid var(--panel-border);
+}
+
+.data-table th {
+  font-weight: 600;
+  color: var(--text-muted);
+  background: #f8fafc;
+}
+
+.data-table tbody tr:hover {
+  background-color: #f1f5f9;
+}
+
+.cell-truncate {
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-muted);
+  cursor: help;
+}
+
+.cell-time {
+  font-family: "JetBrains Mono", monospace;
+  color: var(--text-muted);
+}
+
+.cell-status .badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 500;
+}
+.status-done { background: #dcfce7; color: #166534; }
+.status-failed { background: #fee2e2; color: #991b1b; }
+.status-running { background: #dbeafe; color: #1e40af; }
+.status-pending { background: #fef9c3; color: #854d0e; }
+
+.list-item {
+  padding: 10px 16px;
+  cursor: pointer;
+  border-radius: 6px;
+  margin-bottom: 4px;
+  transition: background 0.2s;
+  color: var(--text-main);
+  font-size: 14px;
+}
+.list-item:hover {
+  background: #f1f5f9;
+}
+.list-item.active {
+  background: #e0e7ff;
+  color: var(--accent);
+  font-weight: 600;
+}

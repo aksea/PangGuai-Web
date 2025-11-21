@@ -10,7 +10,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from threading import Lock
-from typing import Optional
+from typing import Optional, Sequence
 
 from fastapi import Depends, FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -652,6 +652,38 @@ def fetch_task(task_id: str, user_id: int) -> TaskResponse:
     if not row:
         raise HTTPException(status_code=404, detail="任务不存在")
     return TaskResponse(**dict(row))
+
+
+def list_tables(conn: sqlite3.Connection) -> list[str]:
+    cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
+    return [row["name"] for row in cursor.fetchall()]
+
+
+@app.get("/admin/db/tables")
+def admin_list_tables(user=Depends(require_user)) -> dict:
+    """列出数据库中的表名"""
+    with get_db_connection() as conn:
+        tables = list_tables(conn)
+    return {"tables": tables}
+
+
+def fetch_table_rows(conn: sqlite3.Connection, table: str, limit: int) -> Sequence[sqlite3.Row]:
+    cursor = conn.execute(f"SELECT * FROM {table} ORDER BY rowid DESC LIMIT ?", (limit,))
+    return cursor.fetchall()
+
+
+@app.get("/admin/db/table/{table_name}")
+def admin_table_rows(table_name: str, limit: int = 100, user=Depends(require_user)) -> dict:
+    """查看指定表的最近若干行（默认100），仅用于调试/查看。"""
+    if limit <= 0 or limit > 500:
+        raise HTTPException(status_code=400, detail="limit 需在 1-500 之间")
+    with get_db_connection() as conn:
+        tables = list_tables(conn)
+        if table_name not in tables:
+            raise HTTPException(status_code=404, detail="表不存在")
+        rows = fetch_table_rows(conn, table_name, limit)
+        result = [dict(row) for row in rows]
+    return {"table": table_name, "limit": limit, "count": len(result), "rows": result}
 
 
 @app.websocket("/ws/logs/{uid}")

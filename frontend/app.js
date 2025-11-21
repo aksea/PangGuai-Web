@@ -69,6 +69,76 @@ function maskValue(val) {
   return `${val.slice(0, 4)}…${val.slice(-3)}`;
 }
 
+function createTableListItem(name, onClick) {
+  const div = document.createElement("div");
+  div.className = "list-item";
+  div.textContent = name;
+  div.style.cursor = "pointer";
+  div.onclick = () => onClick(name);
+  return div;
+}
+
+function formatTimestamp(ts) {
+  if (!ts) return "-";
+  const date = new Date(ts > 10000000000 ? ts : ts * 1000);
+  return date.toLocaleString("zh-CN", { hour12: false });
+}
+
+function renderTableData(container, rows) {
+  if (!container) return;
+  container.innerHTML = "";
+  if (!rows || rows.length === 0) {
+    container.innerHTML = `<div class="empty-state" style="padding:40px;text-align:center;color:#94a3b8;">暂无数据</div>`;
+    return;
+  }
+
+  const headers = Object.keys(rows[0] || {});
+  const wrapper = document.createElement("div");
+  wrapper.className = "table-wrapper";
+  const table = document.createElement("table");
+  table.className = "data-table";
+
+  const thead = document.createElement("thead");
+  const trHead = document.createElement("tr");
+  headers.forEach((key) => {
+    const th = document.createElement("th");
+    th.textContent = key;
+    trHead.appendChild(th);
+  });
+  thead.appendChild(trHead);
+  table.appendChild(thead);
+
+  const tbody = document.createElement("tbody");
+  rows.forEach((row) => {
+    const tr = document.createElement("tr");
+    headers.forEach((key) => {
+      const td = document.createElement("td");
+      const val = row[key];
+      if (key.endsWith("_at") || key.endsWith("time") || key === "timestamp") {
+        td.className = "cell-time";
+        td.textContent = formatTimestamp(val);
+      } else if (key === "status") {
+        td.className = "cell-status";
+        const badgeClass = `status-${val}`;
+        td.innerHTML = `<span class="badge ${badgeClass}">${val}</span>`;
+      } else if (typeof val === "string" && val.length > 30) {
+        td.className = "cell-truncate";
+        td.textContent = val;
+        td.title = val;
+        td.onclick = () => alert(val);
+      } else {
+        td.textContent = val !== null && val !== undefined ? val : "-";
+      }
+      tr.appendChild(td);
+    });
+    tbody.appendChild(tr);
+  });
+
+  table.appendChild(tbody);
+  wrapper.appendChild(table);
+  container.appendChild(wrapper);
+}
+
 function looksLikeToken(val) {
   return typeof val === "string" && /[A-Za-z0-9_-]{20,}/.test(val);
 }
@@ -442,6 +512,75 @@ function initDashboardPage() {
   startSmartPolling();
 }
 
+// DB admin page
+function initDbPage() {
+  if (!getToken()) {
+    redirectToLogin();
+    return;
+  }
+  const tablesBox = $("#tables-list");
+  const tableDataBox = $("#table-data");
+  const msgBox = $("#db-message");
+  const limitInput = $("#limit-input");
+  const reloadBtn = $("#reload-table");
+  const logoutBtn = $("#logout-btn");
+  const titleEl = $("#table-title");
+
+  let currentTable = null;
+
+  logoutBtn?.addEventListener("click", () => {
+    clearToken();
+    redirectToLogin();
+  });
+
+  async function loadTables() {
+    try {
+      const res = await api("/admin/db/tables");
+      tablesBox.innerHTML = "";
+      res.tables.forEach((name) => {
+        const item = createTableListItem(name, (selected) => {
+          document.querySelectorAll(".list-item").forEach((el) => el.classList.remove("active"));
+          item.classList.add("active");
+          currentTable = selected;
+          loadTable(selected);
+        });
+        if (currentTable === name) item.classList.add("active");
+        tablesBox.appendChild(item);
+      });
+      if (res.tables.length > 0 && !currentTable) {
+        const firstItem = tablesBox.querySelector(".list-item");
+        if (firstItem) firstItem.classList.add("active");
+        currentTable = res.tables[0];
+        loadTable(currentTable);
+      } else if (res.tables.length === 0) {
+        setMessage(msgBox, "暂无表可显示", "warn");
+      }
+    } catch (err) {
+      setMessage(msgBox, err.message, "error");
+    }
+  }
+
+  async function loadTable(name) {
+    if (!name) return;
+    setMessage(msgBox, `加载表 ${name}...`);
+    const limit = parseInt(limitInput?.value || "100", 10) || 100;
+    try {
+      const res = await api(`/admin/db/table/${encodeURIComponent(name)}?limit=${limit}`);
+      titleEl.textContent = `${name}（共返回 ${res.count} 行）`;
+      renderTableData(tableDataBox, res.rows);
+      setMessage(msgBox, "加载成功", "success");
+    } catch (err) {
+      setMessage(msgBox, err.message, "error");
+    }
+  }
+
+  reloadBtn?.addEventListener("click", () => {
+    if (currentTable) loadTable(currentTable);
+  });
+
+  loadTables();
+}
+
 document.addEventListener("DOMContentLoaded", () => {
   const page = document.body.dataset.page;
   if (page === "auth") {
@@ -449,4 +588,5 @@ document.addEventListener("DOMContentLoaded", () => {
     helpers?.attachTokenCapture?.();
   }
   if (page === "dashboard") initDashboardPage();
+  if (page === "dbadmin") initDbPage();
 });

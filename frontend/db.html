@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>数据库管理 · PangGuai</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body class="page-db" data-page="dbadmin">
+  <header class="topbar">
+    <div class="brand brand-inline">
+      <div class="logo-circle logo-sm">DB</div>
+      <h1 class="topbar-title">数据库管理</h1>
+    </div>
+    <div class="topbar-actions">
+      <a href="dashboard.html" class="btn ghost topbar-btn">返回控制台</a>
+      <button id="logout-btn" class="btn ghost topbar-btn">退出账号</button>
+    </div>
+  </header>
+
+  <main class="dashboard-layout">
+    <section class="panel status-panel" style="min-width:260px;">
+      <div class="log-header">
+        <span>表列表</span>
+      </div>
+      <div id="tables-list" class="list-box" style="height:100%;overflow:auto;"></div>
+    </section>
+
+    <section class="panel log-panel">
+      <div class="log-header">
+        <span id="table-title">选择表以查看数据</span>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <label style="font-size:12px;color:var(--text-muted);">Limit</label>
+          <input id="limit-input" type="number" min="1" max="500" value="100" style="width:80px;">
+          <button id="reload-table" class="btn ghost">刷新</button>
+        </div>
+      </div>
+      <div id="db-message" class="message"></div>
+      <div id="table-data" style="flex:1; overflow:hidden; display:flex; flex-direction:column;"></div>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
