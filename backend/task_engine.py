@@ -122,9 +122,11 @@ class PangGuaiRunner:
             "Connection": "Keep-Alive",
             "Accept-Encoding": "gzip",
             "Origin": "https://userapi.qiekj.com",
+            "Referer": "https://userapi.qiekj.com" if "completed" not in url else "https://userapi.qiekj.com/task/list",
             "X-Requested-With": "com.qiekj.user",
             "Sec-Fetch-Site": "same-origin",
             "Sec-Fetch-Mode": "cors",
+            "Sec-Fetch-Dest": "empty",
             "User-Agent": self.ua,
         }
         try:
@@ -257,6 +259,8 @@ class PangGuaiRunner:
             if res.status_code == 200 and res_json.get("code") == 0 and res_json.get("data") is True:
                 self.log(f"第 {i} 次支付宝视频")
                 return True
+            # 失败时也记录返回体，便于排查
+            self.log(f"支付宝任务失败 (status={res.status_code}): {res_json}")
         except Exception as exc:
             self.log(f"支付宝任务异常: {exc}")
         return False
@@ -310,10 +314,14 @@ class PangGuaiRunner:
                     task_type = item.get("type")
                     for idx in range(limit):
                         self._check_stop()
+                        pre_wait_time = random.randint(18, 25) if task_type == 606 else random.randint(6, 10)
+                        self.log(f"  > 正在执行... (模拟浏览 {pre_wait_time}s)")
+                        time.sleep(pre_wait_time)
+
                         result = self.complete_task_detail(task_code=item["taskCode"])
                         if result["success"]:
                             consecutive_failures = 0
-                            self.log(f"  > 第 {idx + 1} 次成功")
+                            self.log(f"  > 第 {idx + 1} 次成功 🎉")
                         else:
                             consecutive_failures += 1
                             if result["stop"]:
@@ -323,14 +331,8 @@ class PangGuaiRunner:
                             if consecutive_failures >= 3:
                                 self.log("  > ⚠️ 连续失败3次，跳过此任务")
                                 break
-                        if task_type == 606:
-                            wait_time = random.randint(18, 25)
-                            self.log(f"  > 广告任务，模拟观看 {wait_time} 秒...")
-                        elif task_type in [604, 605, 623, 7]:
-                            wait_time = random.randint(5, 8)
-                        else:
-                            wait_time = random.randint(8, 12)
-                        time.sleep(wait_time)
+                        # 任务间隙冷却
+                        time.sleep(random.randint(2, 5))
                     self.log(f"{title} 阶段结束")
                     time.sleep(2)
 
@@ -347,11 +349,18 @@ class PangGuaiRunner:
 
             if self.options.alipay:
                 self.log("开始 支付宝 视频循环任务...")
+                failure_streak = 0
                 for num in range(50):
                     self._check_stop()
                     t = str(int(time.time() * 1000))
                     if not self.alipay_video_task(i=num + 1, timestamp=t):
-                        self.log("支付宝任务失败，尝试继续")
+                        failure_streak += 1
+                        self.log(f"支付宝任务失败，尝试继续 (连续失败 {failure_streak})")
+                        if failure_streak >= 3:
+                            self.log("支付宝任务连续失败3次，停止循环")
+                            break
+                    else:
+                        failure_streak = 0
                     time.sleep(random.randint(16, 22))
 
         except InterruptedError as e:

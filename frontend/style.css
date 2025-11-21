@@ -502,39 +502,38 @@ details.advanced-options summary:hover {
 /* --- 数据库表格专用样式 --- */
 .table-wrapper {
   flex: 1;
+  width: 100%;
+  max-width: 100%;
   overflow: auto;
-  border: 1px solid var(--panel-border);
-  border-radius: 8px;
+  border-top: 1px solid var(--panel-border);
   background: #fff;
-  margin-top: 12px;
+  position: relative;
 }
 
 .data-table {
-  width: 100%;
+  min-width: 100%;
   border-collapse: collapse;
   font-size: 13px;
   white-space: nowrap;
 }
 
-.data-table thead {
+.data-table thead th {
   position: sticky;
   top: 0;
   background: #f8fafc;
-  z-index: 1;
+  z-index: 10;
   box-shadow: 0 1px 2px rgba(0,0,0,0.05);
-}
-
-.data-table th,
-.data-table td {
   padding: 12px 16px;
   text-align: left;
+  font-weight: 600;
+  color: var(--text-muted);
   border-bottom: 1px solid var(--panel-border);
 }
 
-.data-table th {
-  font-weight: 600;
-  color: var(--text-muted);
-  background: #f8fafc;
+.data-table td {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--panel-border);
+  color: var(--text-main);
 }
 
 .data-table tbody tr:hover {
@@ -582,4 +581,31 @@ details.advanced-options summary:hover {
   background: #e0e7ff;
   color: var(--accent);
   font-weight: 600;
+}
+
+.table-wrapper::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+.table-wrapper::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 5px;
+  border: 2px solid #fff;
+}
+.table-wrapper::-webkit-scrollbar-track {
+  background: #f1f5f9;
+}
+
+/* DB 页面布局微调 */
+body.page-db .dashboard-layout {
+  grid-template-columns: 220px 1fr;
+  align-items: flex-start;
+}
+body.page-db #tables-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+body.page-db #table-data {
+  min-height: 0;
 }
