@@ -22,7 +22,7 @@ class TaskCreate(BaseModel):
 class LoginReport(BaseModel):
     phone: str = Field(..., pattern=r"^1[3-9]\d{9}$")
     token: str
-    ua: str
+    ua: Optional[str] = None
 
 class UserStatus(BaseModel):
     nick: Optional[str]
@@ -49,4 +49,5 @@ class TaskResponse(BaseModel):
 class RunConfig(BaseModel):
     token: str
     ua: str
+    device_id: Optional[str] = None
     options: TaskOptions

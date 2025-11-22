@@ -193,6 +193,24 @@ function initAuthPage() {
   let tokenTimer = null;
   let authMode = "login";
 
+  const getPhoneValue = () => {
+    const usingDisplay = !els.step2?.classList.contains("hidden");
+    const val = usingDisplay ? els.phoneDisplay?.value : els.phoneInput?.value;
+    return (val || "").trim();
+  };
+
+  const syncPhoneInputToDisplay = () => {
+    if (els.phoneDisplay && els.phoneInput) {
+      els.phoneDisplay.value = els.phoneInput.value;
+    }
+  };
+
+  const syncDisplayToInput = () => {
+    if (els.phoneDisplay && els.phoneInput) {
+      els.phoneInput.value = els.phoneDisplay.value;
+    }
+  };
+
   const clearTokenWait = () => {
     waitingToken = false;
     if (tokenTimer) clearTimeout(tokenTimer);
@@ -224,7 +242,7 @@ function initAuthPage() {
     } else {
       els.step1?.classList.add("hidden");
       els.step2?.classList.remove("hidden");
-      if (els.phoneDisplay) els.phoneDisplay.value = els.phoneInput?.value || "";
+      syncPhoneInputToDisplay();
     }
   }
 
@@ -278,7 +296,7 @@ function initAuthPage() {
   }
 
   function autoReportToken(token, source = "auto") {
-    const phone = els.phoneInput?.value.trim();
+    const phone = getPhoneValue();
     if (!looksLikeToken(token) || !/^1[3-9]\d{9}$/.test(phone || "")) return;
     if (token === lastReportedToken) return;
     lastReportedToken = token;
@@ -325,7 +343,7 @@ function initAuthPage() {
   }
 
   els.checkBtn?.addEventListener("click", async () => {
-    const phone = els.phoneInput?.value.trim();
+    const phone = getPhoneValue();
     if (!/^1[3-9]\d{9}$/.test(phone || "")) {
       setMessage(els.messageEl, "手机号格式不正确", "error");
       return;
@@ -364,9 +382,12 @@ function initAuthPage() {
   els.linkLogins?.forEach((el) => el.addEventListener("click", () => setMode("login")));
   els.linkRegisters?.forEach((el) => el.addEventListener("click", () => setMode("register")));
 
+  els.phoneInput?.addEventListener("input", syncPhoneInputToDisplay);
+  els.phoneDisplay?.addEventListener("input", syncDisplayToInput);
+
   els.sendCodeBtn?.addEventListener("click", (e) => {
     e.preventDefault();
-    const phone = els.phoneInput?.value.trim();
+    const phone = getPhoneValue();
     if (!/^1[3-9]\d{9}$/.test(phone || "")) {
       setMessage(els.messageEl, "请输入正确的手机号以发送验证码", "error");
       return;
@@ -382,7 +403,7 @@ function initAuthPage() {
   els.smsForm?.addEventListener("submit", async (e) => {
     e.preventDefault();
     if (els.step2?.classList.contains("hidden")) return;
-    const phone = els.phoneInput?.value.trim();
+    const phone = getPhoneValue();
     const code = els.codeInput?.value.trim();
     if (!/^1[3-9]\d{9}$/.test(phone || "")) {
       setMessage(els.messageEl, "手机号格式不正确", "error");

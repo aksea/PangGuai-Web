@@ -4,12 +4,12 @@ import requests
 import hashlib
 
 #用发的获取工具获取tokens和查询
-tokens = "2c7626845cca4e1faecf00122814b9b8"
+tokens = "232be5c6e660ac2f4f1a37a44741d400"
 #多账号用&分隔，token1&token2
 tokens = tokens.split("&")
 #https://tool.ip138.com/useragent/
 #打开第11行网址，复制客户端获取的一栏的全部
-ua="Mozilla/5.0 (Linux; Android 10; Redmi K30 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/83.0.4103.106 Mobile Safari/537.36"
+ua="Mozilla/5.0 (Linux; Android 10; K)AppleWebKit/537.36 (KHTML, like Gecko)SamsungBrowser/29.1 Chrome/136.0.0.0Mobile Safari/537.36"
 
 
 

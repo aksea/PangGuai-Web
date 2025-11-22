@@ -19,7 +19,7 @@ from models import (
     RegisterForm, LoginForm, LoginReport, TaskCreate, 
     TaskOptions, TaskResponse, UserStatus, RunConfig, PhoneCheck
 )
-from core.utils import hash_password, verify_password, normalize_ua
+from core.utils import hash_password, verify_password, get_random_ua, generate_device_id
 from manager import TaskManager
 
 app = FastAPI(title="PangGuai Async Backend", version="2.0.0")
@@ -32,6 +32,13 @@ task_manager = TaskManager()
 @app.on_event("startup")
 async def startup_event():
     await init_db()
+    # 重置意外运行状态
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "UPDATE tasks SET status='failed', error='重启中断', updated_at=? WHERE status='running'",
+            (int(time.time()),)
+        )
+        await db.commit()
 
 @app.get("/health")
 def health():
@@ -128,12 +135,15 @@ async def quick_login(body: PhoneCheck, db: aiosqlite.Connection = Depends(get_d
     await db.commit()
     return {"code": 200, "msg": "Login Success", "data": {"uid": row["id"], "session_token": session_token}}
 
-async def get_current_user(authorization: Optional[str] = Header(None)):
+async def get_current_user(
+    authorization: Optional[str] = Header(None),
+    db: aiosqlite.Connection = Depends(get_db)
+):
     if not authorization:
         raise HTTPException(401, "Missing Token")
     parts = authorization.split()
     token = parts[1] if len(parts) == 2 and parts[0].lower() == "bearer" else parts[0]
-    user = await fetch_user_by_token(token)
+    user = await fetch_user_by_token(db, token)
     if not user:
         raise HTTPException(401, "Invalid Token")
     return user
@@ -146,33 +156,34 @@ async def api_login(body: LoginReport, db: aiosqlite.Connection = Depends(get_db
     now = int(time.time())
     
     # 1. 查旧数据
-    cursor = await db.execute("SELECT id, ua FROM users WHERE phone = ?", (body.phone,))
+    cursor = await db.execute("SELECT id, ua, device_id FROM users WHERE phone = ?", (body.phone,))
     row = await cursor.fetchone()
     
-    # 2. UA 处理
-    final_ua = normalize_ua(body.ua)
-    if row and row["ua"] and "android" in row["ua"].lower():
-        # 如果老用户已经有安卓 UA，尽量保持
-        final_ua = row["ua"]
-    
-    user_id = None
+    # 2. 设备指纹生成/补全
+    final_ua = get_random_ua()
+    final_device_id = generate_device_id()
+
     if row:
         user_id = row["id"]
+        if row["ua"]:
+            final_ua = row["ua"]
+        if row["device_id"]:
+            final_device_id = row["device_id"]
         await db.execute(
             """
             UPDATE users 
-            SET token = ?, ua = ?, status = 1, updated_at = ? 
+            SET token = ?, ua = ?, device_id = ?, status = 1, updated_at = ? 
             WHERE id = ?
             """,
-            (body.token, final_ua, now, user_id)
+            (body.token, final_ua, final_device_id, now, user_id)
         )
     else:
         await db.execute(
             """
-            INSERT INTO users (username, password_hash, created_at, phone, token, ua, status, updated_at)
-            VALUES (?, '', ?, ?, ?, ?, 1, ?)
+            INSERT INTO users (username, password_hash, created_at, phone, token, ua, device_id, status, updated_at)
+            VALUES (?, '', ?, ?, ?, ?, ?, 1, ?)
             """,
-            (body.phone, now, body.phone, body.token, final_ua, now)
+            (body.phone, now, body.phone, body.token, final_ua, final_device_id, now)
         )
         user_id = (await db.execute("SELECT last_insert_rowid()")).lastrowid
 
@@ -185,6 +196,31 @@ async def api_login(body: LoginReport, db: aiosqlite.Connection = Depends(get_db
     await db.commit()
     
     return {"code": 200, "msg": "Login Success", "data": {"uid": user_id, "session_token": session_token}}
+
+@app.get("/admin/db/tables")
+async def admin_list_tables(user = Depends(get_current_user)):
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
+        )
+        rows = await cursor.fetchall()
+    return {"tables": [row["name"] for row in rows]}
+
+@app.get("/admin/db/table/{name}")
+async def admin_get_table(name: str, limit: int = 100, user = Depends(get_current_user)):
+    limit = max(1, min(limit or 100, 500))
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+        )
+        allowed = {row["name"] for row in await cursor.fetchall()}
+        if name not in allowed:
+            raise HTTPException(404, "表不存在")
+        cursor = await db.execute(f"SELECT * FROM {name} ORDER BY ROWID DESC LIMIT ?", (limit,))
+        rows = await cursor.fetchall()
+    return {"count": len(rows), "rows": [dict(row) for row in rows]}
 
 @app.get("/api/user/status", response_model=UserStatus)
 async def user_status(user = Depends(get_current_user), db: aiosqlite.Connection = Depends(get_db)):
@@ -226,6 +262,26 @@ async def start_task_endpoint(
 
     now = int(time.time())
     start_of_day = now - (now % 86400)
+
+    cursor = await db.execute("SELECT ua, device_id FROM users WHERE id = ?", (user["id"],))
+    device_row = await cursor.fetchone()
+    if not device_row:
+        raise HTTPException(404, "用户不存在")
+
+    ua = device_row["ua"] or ""
+    device_id = device_row["device_id"] or ""
+    fingerprint_updated = False
+    if not ua:
+        ua = get_random_ua()
+        fingerprint_updated = True
+    if not device_id:
+        device_id = generate_device_id()
+        fingerprint_updated = True
+    if fingerprint_updated:
+        await db.execute(
+            "UPDATE users SET ua = ?, device_id = ?, updated_at = ? WHERE id = ?",
+            (ua, device_id, now, user["id"])
+        )
     
     # 查找今日任务复用，或新建
     cursor = await db.execute(
@@ -244,7 +300,7 @@ async def start_task_endpoint(
             SET status = 'pending', error = NULL, options = ?, updated_at = ?, token = ?, ua = ?
             WHERE id = ?
             """,
-            (options_json, now, user["token"], user["ua"], task_id)
+            (options_json, now, user["token"], ua, task_id)
         )
     else:
         task_id = str(uuid.uuid4())
@@ -253,13 +309,13 @@ async def start_task_endpoint(
             INSERT INTO tasks (id, user_id, phone, ua_mode, ua, token, status, error, options, created_at, updated_at)
             VALUES (?, ?, ?, 'custom', ?, ?, 'pending', NULL, ?, ?, ?)
             """,
-            (task_id, user["id"], user["phone"], user["ua"], user["token"], options_json, now, now)
+            (task_id, user["id"], user["phone"], ua, user["token"], options_json, now, now)
         )
     
     await db.commit()
     
     # 启动异步任务
-    config = RunConfig(token=user["token"], ua=user["ua"], options=options)
+    config = RunConfig(token=user["token"], ua=ua, device_id=device_id, options=options)
     await task_manager.start_task(user["id"], task_id, config)
     
     # 返回最新状态

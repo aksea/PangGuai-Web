@@ -92,6 +92,10 @@ class TaskManager:
             except InterruptedError:
                 await update_task_status(task_id, "failed", "用户停止")
                 await handle.broadcast_log("任务已被用户停止")
+            except asyncio.CancelledError:
+                await update_task_status(task_id, "failed", "用户停止")
+                await handle.broadcast_log("任务已被用户停止")
+                raise
             except Exception as e:
                 import traceback
                 traceback.print_exc()
@@ -113,26 +117,41 @@ class TaskManager:
             handle.stop_event.set()
             # 等待一小会确保它收到
             await handle.broadcast_log("正在停止...")
+            if handle.task and not handle.task.done():
+                try:
+                    handle.task.cancel()
+                    await asyncio.wait_for(handle.task, timeout=5)
+                except Exception:
+                    pass
             return True
         return False
 
     async def subscribe_logs(self, user_id: int, websocket: WebSocket):
         await websocket.accept()
-        handle = self.active_tasks.get(user_id)
-        
-        # 发送历史日志（如果有活跃任务）
-        if handle:
-            handle.ws_subscribers.add(websocket)
-            for line in handle.log_history:
-                await websocket.send_text(line)
-        else:
-            # 如果没有活跃任务，尝试读取最近的一个日志文件
-            # 这里简化处理：仅发送"当前无运行任务"
+        current_handle = None
+
+        async def attach_handle():
+            nonlocal current_handle
+            new_handle = self.active_tasks.get(user_id)
+            if new_handle and new_handle is not current_handle:
+                current_handle = new_handle
+                new_handle.ws_subscribers.add(websocket)
+                for line in new_handle.log_history:
+                    await websocket.send_text(line)
+
+        # 初始检查
+        await attach_handle()
+        if current_handle is None:
             await websocket.send_text("[System] 当前无运行中任务")
 
         try:
             while True:
-                await websocket.receive_text() # keep alive
+                # 周期性附加到新任务并保持连接
+                await attach_handle()
+                try:
+                    await asyncio.wait_for(websocket.receive_text(), timeout=3)
+                except asyncio.TimeoutError:
+                    continue
         except Exception:
-            if handle:
-                handle.ws_subscribers.discard(websocket)
+            if current_handle:
+                current_handle.ws_subscribers.discard(websocket)
