@@ -12,12 +12,12 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from database import (
     init_db, get_db, fetch_user_by_token, 
-    DB_PATH
+    DB_PATH, TOKEN_VALID_SECONDS
 )
 import aiosqlite
 from models import (
     RegisterForm, LoginForm, LoginReport, TaskCreate, 
-    TaskOptions, TaskResponse, UserStatus, RunConfig
+    TaskOptions, TaskResponse, UserStatus, RunConfig, PhoneCheck
 )
 from core.utils import hash_password, verify_password, normalize_ua
 from manager import TaskManager
@@ -68,6 +68,65 @@ async def login(body: LoginForm, db: aiosqlite.Connection = Depends(get_db)):
     )
     await db.commit()
     return {"token": token, "user_id": row["id"]}
+
+def _is_token_expired(last_update: Optional[int], now: int) -> bool:
+    last_ts = last_update or 0
+    return last_ts < now - TOKEN_VALID_SECONDS
+
+@app.post("/auth/check")
+async def check_phone_status(body: PhoneCheck, db: aiosqlite.Connection = Depends(get_db)):
+    """检查手机号对应的 Token 是否在 30 天有效期内"""
+    now = int(time.time())
+    cursor = await db.execute(
+        "SELECT id, token, updated_at, status FROM users WHERE phone = ?", 
+        (body.phone,)
+    )
+    row = await cursor.fetchone()
+    if not row:
+        return {"status": "need_register", "msg": "用户不存在"}
+    if not row["token"]:
+        return {"status": "need_register", "msg": "Token缺失"}
+    if row["status"] is not None and row["status"] <= 0:
+        return {"status": "expired", "msg": "Token已失效，请重新验证"}
+    if _is_token_expired(row["updated_at"], now):
+        await db.execute(
+            "UPDATE users SET token = NULL, status = 0, updated_at = ? WHERE id = ?",
+            (now, row["id"])
+        )
+        await db.commit()
+        return {"status": "expired", "msg": "Token已过期，请重新验证"}
+    return {"status": "valid", "msg": "Token有效"}
+
+@app.post("/auth/quick_login")
+async def quick_login(body: PhoneCheck, db: aiosqlite.Connection = Depends(get_db)):
+    """仅凭手机号快捷登录（Token 有效则直连控制台）"""
+    now = int(time.time())
+    cursor = await db.execute(
+        "SELECT id, token, updated_at, status FROM users WHERE phone = ?", 
+        (body.phone,)
+    )
+    row = await cursor.fetchone()
+    if not row:
+        raise HTTPException(404, "用户不存在")
+    if not row["token"]:
+        raise HTTPException(400, "Token缺失，请重新验证")
+    if row["status"] is not None and row["status"] <= 0:
+        raise HTTPException(400, "Token已失效，请重新注册")
+    if _is_token_expired(row["updated_at"], now):
+        await db.execute(
+            "UPDATE users SET token = NULL, status = 0, updated_at = ? WHERE id = ?",
+            (now, row["id"])
+        )
+        await db.commit()
+        raise HTTPException(400, "Token已过期，请重新注册")
+
+    session_token = str(uuid.uuid4())
+    await db.execute(
+        "INSERT INTO sessions (token, user_id, expire_at, created_at) VALUES (?, ?, ?, ?)",
+        (session_token, row["id"], now + 14400, now)
+    )
+    await db.commit()
+    return {"code": 200, "msg": "Login Success", "data": {"uid": row["id"], "session_token": session_token}}
 
 async def get_current_user(authorization: Optional[str] = Header(None)):
     if not authorization:

@@ -5,6 +5,7 @@ from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent
 DB_PATH = BASE_DIR / "database.db"
+TOKEN_VALID_SECONDS = 30 * 24 * 60 * 60
 
 async def get_db():
     """FastAPI 依赖使用的生成器"""
@@ -66,6 +67,7 @@ async def init_db():
 # 便捷函数
 async def fetch_user_by_token(token: str):
     now = int(time.time())
+    valid_since = now - TOKEN_VALID_SECONDS
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         cursor = await db.execute(
@@ -77,7 +79,26 @@ async def fetch_user_by_token(token: str):
             """,
             (token, now),
         )
-        return await cursor.fetchone()
+        user = await cursor.fetchone()
+        if not user:
+            return None
+
+        # Token 30 天有效期校验：仅对手机号/托管用户生效
+        if user["phone"]:
+            last_update = user["updated_at"] or 0
+            expired = (
+                not user["token"] 
+                or last_update < valid_since 
+                or (user["status"] is not None and user["status"] <= 0)
+            )
+            if expired:
+                await db.execute(
+                    "UPDATE users SET token = NULL, status = 0, updated_at = ? WHERE id = ?",
+                    (now, user["id"])
+                )
+                await db.commit()
+                return None
+        return user
 
 async def update_task_status(task_id: str, status: str, error: str = None):
     now = int(time.time())

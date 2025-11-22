@@ -31,6 +31,30 @@ body {
   line-height: 1.5;
 }
 
+.hidden {
+  display: none !important;
+}
+
+.step-title {
+  margin-bottom: 12px;
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text-main);
+}
+
+.back-link {
+  display: block;
+  margin-top: 12px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.back-link:hover {
+  color: var(--accent);
+}
+
 .bg-grid {
   display: none;
 }

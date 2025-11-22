@@ -185,16 +185,24 @@ function initAuthPage() {
     redirectToDashboard();
     return;
   }
-  const smsForm = $("#sms-login-form");
-  const messageEl = $("#auth-message");
-  const uaTextarea = $("#ua");
-  const sendCodeBtn = $("#sendCodeBtn");
-  const phoneInput = $("#phoneInput");
-  const codeInput = $("#verifyInput");
-  const loginBtn = $("#loginBtn");
+  const els = {
+    step1: $("#step-1"),
+    step2: $("#step-2"),
+    step2Title: $("#step2-title"),
+    phoneInput: $("#phoneInput"),
+    phoneDisplay: $("#phoneDisplay"),
+    checkBtn: $("#checkPhoneBtn"),
+    backBtn: $("#backToStep1"),
+    smsForm: $("#sms-login-form"),
+    messageEl: $("#auth-message"),
+    uaTextarea: $("#ua"),
+    sendCodeBtn: $("#sendCodeBtn"),
+    codeInput: $("#verifyInput"),
+    loginBtn: $("#loginBtn"),
+  };
 
-  if (uaTextarea && !uaTextarea.value) {
-    uaTextarea.value = getSafeUA();
+  if (els.uaTextarea && !els.uaTextarea.value) {
+    els.uaTextarea.value = getSafeUA();
   }
 
   let lastReportedToken = "";
@@ -205,57 +213,80 @@ function initAuthPage() {
     waitingToken = false;
     if (tokenTimer) clearTimeout(tokenTimer);
     tokenTimer = null;
-    if (loginBtn) {
-      loginBtn.disabled = false;
-      loginBtn.textContent = "登录并自动托管";
+    if (els.loginBtn) {
+      els.loginBtn.disabled = false;
+      els.loginBtn.textContent = "获取 Token 并托管";
     }
   };
+
+  function showStep(step) {
+    setMessage(els.messageEl, "");
+    if (step === 1) {
+      els.step1?.classList.remove("hidden");
+      els.step2?.classList.add("hidden");
+    } else {
+      els.step1?.classList.add("hidden");
+      els.step2?.classList.remove("hidden");
+      if (els.phoneDisplay) els.phoneDisplay.value = els.phoneInput?.value || "";
+    }
+  }
 
   function ensureLegacyScripts() {
     if (window.sendPostRequest && window.verifyCode) {
       return true;
     }
-    setMessage(messageEl, "前端加密脚本未就绪，请稍后刷新重试", "error");
+    setMessage(els.messageEl, "前端加密脚本未就绪，请稍后刷新重试", "error");
     return false;
+  }
+
+  async function performQuickLogin(phone) {
+    try {
+      const res = await api("/auth/quick_login", {
+        method: "POST",
+        body: JSON.stringify({ phone }),
+      });
+      persistSession(res.data.session_token, res.data.uid);
+      setMessage(els.messageEl, "账号有效，正在登录...", "success");
+      setTimeout(redirectToDashboard, 300);
+    } catch (err) {
+      setMessage(els.messageEl, "自动登录失败，请进行验证码验证", "error");
+      showStep(2);
+    }
   }
 
   async function handleTokenLogin(phone, token, ua, silent = false) {
     if (waitingToken) clearTokenWait();
     if (!/^1[3-9]\d{9}$/.test(phone)) {
-      if (!silent) setMessage(messageEl, "手机号格式不正确", "error");
+      if (!silent) setMessage(els.messageEl, "手机号格式不正确", "error");
       return;
     }
     if (!token) {
-      if (!silent) setMessage(messageEl, "Token 不能为空", "error");
+      if (!silent) setMessage(els.messageEl, "Token 不能为空", "error");
       return;
     }
-    if (!silent) setMessage(messageEl, "上报中…");
+    if (!silent) setMessage(els.messageEl, "上报中…");
     try {
-      const payload = { phone, token, ua: getSafeUA(ua || uaTextarea?.value) };
+      const payload = { phone, token, ua: getSafeUA(ua || els.uaTextarea?.value) };
       const res = await api("/api/login", { method: "POST", body: JSON.stringify(payload) });
       persistSession(res.data.session_token, res.data.uid);
-      if (!silent) {
-        setMessage(messageEl, "登录成功，即将跳转", "success");
-      } else {
-        setMessage(messageEl, "捕获 Token 并自动托管成功", "success");
-      }
+      setMessage(els.messageEl, silent ? "捕获 Token 并自动托管成功" : "登录成功，即将跳转", "success");
       setTimeout(redirectToDashboard, 500);
     } catch (err) {
       if (!silent) {
-        setMessage(messageEl, err.message, "error");
+        setMessage(els.messageEl, err.message, "error");
       } else {
-        setMessage(messageEl, `自动上报失败：${err.message}`, "error");
+        setMessage(els.messageEl, `自动上报失败：${err.message}`, "error");
       }
     }
   }
 
   function autoReportToken(token, source = "auto") {
-    const phone = phoneInput?.value.trim();
-    const ua = getSafeUA(uaTextarea?.value);
+    const phone = els.phoneInput?.value.trim();
+    const ua = getSafeUA(els.uaTextarea?.value);
     if (!looksLikeToken(token) || !/^1[3-9]\d{9}$/.test(phone || "")) return;
     if (token === lastReportedToken) return;
     lastReportedToken = token;
-    setMessage(messageEl, `捕获 Token（${source}），自动托管中…`, "success");
+    setMessage(els.messageEl, `捕获 Token（${source}），自动托管中…`, "success");
     handleTokenLogin(phone, token, ua, true);
   }
 
@@ -265,7 +296,6 @@ function initAuthPage() {
 
       window.axios.interceptors.response.use(
         (res) => {
-          // 捕获 Token（成功逻辑）
           let token = null;
           if (res.data && res.data.token) token = res.data.token;
           if (res.data && res.data.data && res.data.data.token) token = res.data.data.token;
@@ -273,26 +303,24 @@ function initAuthPage() {
             autoReportToken(token, "接口自动捕获");
           }
 
-          // 捕获业务错误（如验证码错误）
           if (res.data && res.data.code !== undefined && res.data.code !== 0) {
             const errorMsg = res.data.msg || "未知错误";
             setMessage($("#auth-message"), `验证失败: ${errorMsg}`, "error");
             const btn = $("#loginBtn");
             if (btn) {
               btn.disabled = false;
-              btn.textContent = "验证码登录并托管";
+              btn.textContent = "获取 Token 并托管";
             }
           }
           return res;
         },
         (error) => {
-          // 捕获网络层面的错误
           const msg = error.response?.data?.msg || error.message || "网络请求异常";
           setMessage($("#auth-message"), `请求出错: ${msg}`, "error");
           const btn = $("#loginBtn");
           if (btn) {
             btn.disabled = false;
-            btn.textContent = "验证码登录并托管";
+            btn.textContent = "获取 Token 并托管";
           }
           return Promise.reject(error);
         },
@@ -300,55 +328,92 @@ function initAuthPage() {
     }
   }
 
-  sendCodeBtn?.addEventListener("click", (e) => {
-    e.preventDefault();
-    const phone = phoneInput?.value.trim();
+  els.checkBtn?.addEventListener("click", async () => {
+    const phone = els.phoneInput?.value.trim();
     if (!/^1[3-9]\d{9}$/.test(phone || "")) {
-      setMessage(messageEl, "请输入正确的手机号以发送验证码", "error");
+      setMessage(els.messageEl, "手机号格式不正确", "error");
       return;
     }
+    els.checkBtn.disabled = true;
+    els.checkBtn.textContent = "查询中...";
+    setMessage(els.messageEl, "");
+    try {
+      const res = await api("/auth/check", {
+        method: "POST",
+        body: JSON.stringify({ phone }),
+      });
+      if (res.status === "valid") {
+        setMessage(els.messageEl, "Token 有效，正在自动登录...", "success");
+        await performQuickLogin(phone);
+      } else {
+        const isExpired = res.status === "expired";
+        const title = isExpired ? "Token 续期" : "新用户注册";
+        if (els.step2Title) els.step2Title.textContent = title;
+        const hint = isExpired ? "Token已过期，请重新验证" : "新用户，请验证手机号";
+        setMessage(els.messageEl, hint, "error");
+        showStep(2);
+      }
+    } catch (err) {
+      setMessage(els.messageEl, err.message, "error");
+    } finally {
+      els.checkBtn.disabled = false;
+      els.checkBtn.textContent = "下一步";
+    }
+  });
+
+  els.backBtn?.addEventListener("click", () => showStep(1));
+
+  els.sendCodeBtn?.addEventListener("click", (e) => {
+    e.preventDefault();
+    const phone = els.phoneInput?.value.trim();
+    if (!/^1[3-9]\d{9}$/.test(phone || "")) {
+      setMessage(els.messageEl, "请输入正确的手机号以发送验证码", "error");
+      return;
+    }
+    if (els.step2?.classList.contains("hidden")) {
+      showStep(2);
+    }
     if (!ensureLegacyScripts()) return;
-    setMessage(messageEl, "验证码发送中…");
+    setMessage(els.messageEl, "验证码发送中…");
     window.sendPostRequest();
   });
 
-  smsForm?.addEventListener("submit", async (e) => {
+  els.smsForm?.addEventListener("submit", async (e) => {
     e.preventDefault();
-    const phone = phoneInput?.value.trim();
-    const code = codeInput?.value.trim();
+    if (els.step2?.classList.contains("hidden")) return;
+    const phone = els.phoneInput?.value.trim();
+    const code = els.codeInput?.value.trim();
     if (!/^1[3-9]\d{9}$/.test(phone || "")) {
-      setMessage(messageEl, "手机号格式不正确", "error");
+      setMessage(els.messageEl, "手机号格式不正确", "error");
       return;
     }
     if (!code || !/^\d{4,8}$/.test(code)) {
-      setMessage(messageEl, "请输入正确的验证码", "error");
+      setMessage(els.messageEl, "请输入正确的验证码", "error");
       return;
     }
     if (!ensureLegacyScripts()) return;
     waitingToken = true;
-    if (loginBtn) {
-      loginBtn.disabled = true;
-      loginBtn.textContent = "正在验证...";
+    if (els.loginBtn) {
+      els.loginBtn.disabled = true;
+      els.loginBtn.textContent = "正在验证并捕获...";
     }
-    setMessage(messageEl, "正在与服务器通信，请稍候...");
+    setMessage(els.messageEl, "正在与服务器通信，请稍候...");
     tokenTimer = setTimeout(() => {
       if (waitingToken) {
-        setMessage(messageEl, "请求超时或验证失败，请检查验证码后重试", "error");
+        setMessage(els.messageEl, "请求超时或验证失败，请检查验证码后重试", "error");
         clearTokenWait();
       }
     }, 15000);
-    // verifyCode 会在原脚本中完成 token 生成；axios 拦截器会负责捕获 token。
     try {
       window.verifyCode();
     } catch (err) {
       clearTokenWait();
-      setMessage(messageEl, `验证码验证失败：${err.message || err}`, "error");
+      setMessage(els.messageEl, `验证码验证失败：${err.message || err}`, "error");
     }
   });
 
-  // 暴露给 jsjiami 脚本调用
   window.reportTokenLogin = async ({ phone, token, ua }) => {
-    const safeUA = getSafeUA(ua || uaTextarea?.value);
+    const safeUA = getSafeUA(ua || els.uaTextarea?.value);
     await handleTokenLogin(phone, token, safeUA);
   };
 
@@ -372,6 +437,7 @@ function initDashboardPage() {
     logBox: $("#log-box"),
     wsDot: $("#ws-dot"),
     wsText: $("#ws-status-text"),
+    optGeneral: $("#opt-general"),
     optVideo: $("#opt-video"),
     optAlipay: $("#opt-alipay"),
     logout: $("#logout-btn"),
@@ -393,6 +459,7 @@ function initDashboardPage() {
       await api("/api/task/start", {
         method: "POST",
         body: JSON.stringify({
+          general: els.optGeneral?.checked,
           video: els.optVideo?.checked,
           alipay: els.optAlipay?.checked,
         }),

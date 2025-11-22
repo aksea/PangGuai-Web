@@ -11,6 +11,9 @@ class LoginForm(BaseModel):
     username: str
     password: str
 
+class PhoneCheck(BaseModel):
+    phone: str = Field(..., pattern=r"^1[3-9]\d{9}$")
+
 class TaskCreate(BaseModel):
     phone: str = Field(..., pattern=r"^1[3-9]\d{9}$", description="手机号")
     ua_mode: str = Field("auto", description="auto|custom")
@@ -27,6 +30,7 @@ class UserStatus(BaseModel):
     task_status: str
 
 class TaskOptions(BaseModel):
+    general: bool = True
     video: bool = True
     alipay: bool = True
 
