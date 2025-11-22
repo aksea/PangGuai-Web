@@ -35,11 +35,6 @@ async def init_db():
                 updated_at INTEGER
             )
         """)
-        try:
-            await conn.execute("ALTER TABLE users ADD COLUMN device_id TEXT")
-        except aiosqlite.OperationalError as e:
-            if "duplicate column name" not in str(e).lower():
-                raise
         # 会话表
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS sessions (

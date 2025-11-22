@@ -18,7 +18,7 @@
    ```bash
    uvicorn main:app --host 0.0.0.0 --port 8000 --reload
    ```
-   首次启动会自动初始化 SQLite（backend/database.db），并尝试兼容旧表结构。
+   首次启动会自动初始化 SQLite（backend/database.db），按当前表结构创建。
 4) 打开前端：
    - 直接用浏览器打开 `frontend/index.html`，或用任意静态服务器。
    - 如需自定义后端地址，在页面注入 `window.PANGGUAI_API_BASE = "http://your-api";`。
