@@ -55,6 +55,37 @@ body {
   color: var(--accent);
 }
 
+.auth-links {
+  margin: 6px 0 12px;
+  font-size: 13px;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: center;
+}
+
+.link-btn {
+  cursor: pointer;
+  color: var(--text-muted);
+  padding: 2px 4px;
+  border-radius: 4px;
+}
+
+.link-btn:hover {
+  color: var(--text-main);
+  background: #e2e8f0;
+}
+
+.link-btn.active {
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.divider-dot {
+  color: var(--panel-border);
+}
+
 .bg-grid {
   display: none;
 }

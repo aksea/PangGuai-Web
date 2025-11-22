@@ -33,10 +33,5 @@ def sha256_encrypt(data: str) -> str:
     return sha256.hexdigest()
 
 def normalize_ua(ua: str) -> str:
-    ua_str = (ua or "").strip()
-    lower = ua_str.lower()
-    is_pc = ("windows" in lower) or ("macintosh" in lower) or ("mac os" in lower)
-    has_android = "android" in lower
-    if not ua_str or (is_pc and not has_android):
-        return get_random_ua()
-    return ua_str
+    # 统一使用后端 UA 池，忽略前端 UA 输入
+    return get_random_ua()

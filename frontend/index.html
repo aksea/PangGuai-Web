@@ -23,16 +23,19 @@
 
       <form id="sms-login-form" class="auth-form">
         <div id="step-1">
-          <div class="step-title">登录 / 注册</div>
           <div class="field">
             <label for="phoneInput">手机号</label>
             <input id="phoneInput" name="phone" maxlength="11" placeholder="请输入11位手机号" required>
           </div>
           <button id="checkPhoneBtn" type="button" class="btn primary full-width">下一步</button>
+          <div class="auth-links">
+            <span class="link-btn link-login active" data-mode="login">登录</span>
+            <span class="divider-dot">·</span>
+            <span class="link-btn link-register" data-mode="register">注册</span>
+          </div>
         </div>
 
         <div id="step-2" class="hidden">
-          <div class="step-title" id="step2-title">安全验证</div>
           <div class="field">
             <label>手机号</label>
             <input id="phoneDisplay" readonly style="background:#f1f5f9; color:#94a3b8;">
@@ -46,15 +49,12 @@
             </div>
           </div>
 
-          <details class="advanced-options">
-            <summary>高级设置 (UA)</summary>
-            <div class="field">
-              <textarea id="ua" name="ua" rows="2" placeholder="User-Agent"></textarea>
-            </div>
-          </details>
-
           <button id="loginBtn" type="submit" class="btn primary full-width">获取 Token 并托管</button>
-          <span class="back-link" id="backToStep1">返回修改手机号</span>
+          <div class="auth-links">
+            <span class="link-btn link-login active" data-mode="login">登录</span>
+            <span class="divider-dot">·</span>
+            <span class="link-btn link-register" data-mode="register">注册</span>
+          </div>
         </div>
 
         <p class="helper">

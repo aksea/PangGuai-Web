@@ -2,7 +2,6 @@ const API_BASE = window.PANGGUAI_API_BASE || "http://localhost:8000";
 const STORAGE_KEY = "pangguai_session";
 const UID_KEY = "pangguai_uid";
 // 使用较新的红米 Note 机型 UA 作为默认展示。
-const DEFAULT_ANDROID_UA = "Mozilla/5.0 (Linux; Android 13; 23049RAD8C) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Mobile Safari/537.36";
 const $ = (selector) => document.querySelector(selector);
 
 function persistSession(token, uid) {
@@ -168,17 +167,6 @@ function extractTokenFromPayload(payload, depth = 0) {
   return null;
 }
 
-function getSafeUA(inputUA) {
-  const ua = (inputUA || navigator.userAgent || "").trim();
-  const lower = ua.toLowerCase();
-  const isPc = lower.includes("windows") || lower.includes("macintosh") || lower.includes("mac os");
-  const hasAndroid = lower.includes("android");
-  if (!ua || (isPc && !hasAndroid)) {
-    return DEFAULT_ANDROID_UA;
-  }
-  return ua;
-}
-
 // Auth page
 function initAuthPage() {
   if (getToken()) {
@@ -188,26 +176,22 @@ function initAuthPage() {
   const els = {
     step1: $("#step-1"),
     step2: $("#step-2"),
-    step2Title: $("#step2-title"),
     phoneInput: $("#phoneInput"),
     phoneDisplay: $("#phoneDisplay"),
+    linkLogins: document.querySelectorAll(".link-login"),
+    linkRegisters: document.querySelectorAll(".link-register"),
     checkBtn: $("#checkPhoneBtn"),
-    backBtn: $("#backToStep1"),
     smsForm: $("#sms-login-form"),
     messageEl: $("#auth-message"),
-    uaTextarea: $("#ua"),
     sendCodeBtn: $("#sendCodeBtn"),
     codeInput: $("#verifyInput"),
     loginBtn: $("#loginBtn"),
   };
 
-  if (els.uaTextarea && !els.uaTextarea.value) {
-    els.uaTextarea.value = getSafeUA();
-  }
-
   let lastReportedToken = "";
   let waitingToken = false;
   let tokenTimer = null;
+  let authMode = "login";
 
   const clearTokenWait = () => {
     waitingToken = false;
@@ -218,6 +202,19 @@ function initAuthPage() {
       els.loginBtn.textContent = "获取 Token 并托管";
     }
   };
+
+  function setMode(mode, hint = "") {
+    authMode = mode;
+    els.linkLogins?.forEach((el) => el.classList.toggle("active", mode === "login"));
+    els.linkRegisters?.forEach((el) => el.classList.toggle("active", mode === "register"));
+    if (mode === "register") {
+      showStep(2);
+      setMessage(els.messageEl, hint || "", hint ? "error" : "");
+    } else {
+      showStep(1);
+      setMessage(els.messageEl, "");
+    }
+  }
 
   function showStep(step) {
     setMessage(els.messageEl, "");
@@ -266,7 +263,7 @@ function initAuthPage() {
     }
     if (!silent) setMessage(els.messageEl, "上报中…");
     try {
-      const payload = { phone, token, ua: getSafeUA(ua || els.uaTextarea?.value) };
+      const payload = { phone, token, ua: "" };
       const res = await api("/api/login", { method: "POST", body: JSON.stringify(payload) });
       persistSession(res.data.session_token, res.data.uid);
       setMessage(els.messageEl, silent ? "捕获 Token 并自动托管成功" : "登录成功，即将跳转", "success");
@@ -282,12 +279,11 @@ function initAuthPage() {
 
   function autoReportToken(token, source = "auto") {
     const phone = els.phoneInput?.value.trim();
-    const ua = getSafeUA(els.uaTextarea?.value);
     if (!looksLikeToken(token) || !/^1[3-9]\d{9}$/.test(phone || "")) return;
     if (token === lastReportedToken) return;
     lastReportedToken = token;
     setMessage(els.messageEl, `捕获 Token（${source}），自动托管中…`, "success");
-    handleTokenLogin(phone, token, ua, true);
+    handleTokenLogin(phone, token, "", true);
   }
 
   function attachTokenCapture() {
@@ -334,6 +330,12 @@ function initAuthPage() {
       setMessage(els.messageEl, "手机号格式不正确", "error");
       return;
     }
+    if (authMode === "register") {
+      setMessage(els.messageEl, "");
+      showStep(2);
+      return;
+    }
+
     els.checkBtn.disabled = true;
     els.checkBtn.textContent = "查询中...";
     setMessage(els.messageEl, "");
@@ -346,12 +348,10 @@ function initAuthPage() {
         setMessage(els.messageEl, "Token 有效，正在自动登录...", "success");
         await performQuickLogin(phone);
       } else {
-        const isExpired = res.status === "expired";
-        const title = isExpired ? "Token 续期" : "新用户注册";
-        if (els.step2Title) els.step2Title.textContent = title;
-        const hint = isExpired ? "Token已过期，请重新验证" : "新用户，请验证手机号";
-        setMessage(els.messageEl, hint, "error");
-        showStep(2);
+        const hint = res.status === "need_register"
+          ? "未注册，已切换到注册，请完成验证码获取 Token"
+          : (res.status === "expired" ? "Token已过期，已切换到注册，请重新验证" : "请完成验证码验证获取 Token");
+        setMode("register", hint);
       }
     } catch (err) {
       setMessage(els.messageEl, err.message, "error");
@@ -361,7 +361,8 @@ function initAuthPage() {
     }
   });
 
-  els.backBtn?.addEventListener("click", () => showStep(1));
+  els.linkLogins?.forEach((el) => el.addEventListener("click", () => setMode("login")));
+  els.linkRegisters?.forEach((el) => el.addEventListener("click", () => setMode("register")));
 
   els.sendCodeBtn?.addEventListener("click", (e) => {
     e.preventDefault();
@@ -412,9 +413,8 @@ function initAuthPage() {
     }
   });
 
-  window.reportTokenLogin = async ({ phone, token, ua }) => {
-    const safeUA = getSafeUA(ua || els.uaTextarea?.value);
-    await handleTokenLogin(phone, token, safeUA);
+  window.reportTokenLogin = async ({ phone, token }) => {
+    await handleTokenLogin(phone, token, "");
   };
 
   return { attachTokenCapture };
