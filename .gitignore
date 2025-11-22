@@ -32,4 +32,8 @@ node_modules/
 dist/
 build/
 
+reference/
+
 AGENTS.md
+
+docs/
