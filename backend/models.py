@@ -31,7 +31,6 @@ class UserStatus(BaseModel):
 
 class TaskOptions(BaseModel):
     general: bool = True
-    video: bool = True
     alipay: bool = True
 
 class TaskResponse(BaseModel):

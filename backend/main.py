@@ -9,6 +9,7 @@ from typing import Optional
 
 from fastapi import Depends, FastAPI, Header, HTTPException, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from database import (
     init_db, get_db, fetch_user_by_token, 
@@ -20,6 +21,7 @@ from models import (
     TaskOptions, TaskResponse, UserStatus, RunConfig, PhoneCheck
 )
 from core.utils import hash_password, verify_password, get_random_ua, generate_device_id
+from core.client import PangGuaiClient
 from manager import TaskManager
 
 app = FastAPI(title="PangGuai Async Backend", version="2.0.0")
@@ -223,7 +225,11 @@ async def admin_get_table(name: str, limit: int = 100, user = Depends(get_curren
     return {"count": len(rows), "rows": [dict(row) for row in rows]}
 
 @app.get("/api/user/status", response_model=UserStatus)
-async def user_status(user = Depends(get_current_user), db: aiosqlite.Connection = Depends(get_db)):
+async def user_status(
+    refresh: bool = False,
+    user = Depends(get_current_user), 
+    db: aiosqlite.Connection = Depends(get_db)
+):
     # 查最新任务状态
     cursor = await db.execute(
         "SELECT status FROM tasks WHERE user_id = ? ORDER BY updated_at DESC LIMIT 1", 
@@ -233,14 +239,28 @@ async def user_status(user = Depends(get_current_user), db: aiosqlite.Connection
     t_status = task_row["status"] if task_row else "idle"
     
     # 如果内存中正在跑，强制覆盖状态（防止数据库未及时更新）
-    if task_manager.get_handle(user["id"]):
+    handle = task_manager.get_handle(user["id"])
+    if handle:
         t_status = "running"
 
-    return UserStatus(
-        nick=user["nick"],
-        integral=user["integral_balance"] or 0,
-        task_status=t_status
-    )
+    integral = user["integral_balance"] or 0
+
+    # 可选：刷新远端积分并写回
+    if refresh and not handle and user["token"] and user["ua"]:
+        client = PangGuaiClient(user["token"], user["ua"], user["device_id"])
+        try:
+            bal_res = await client.request("post", "https://userapi.qiekj.com/user/balance", {"token": user["token"]})
+            if bal_res and bal_res.get("code") == 0:
+                integral = int(bal_res["data"]["integral"])
+                await db.execute(
+                    "UPDATE users SET integral_balance = ? WHERE id = ?",
+                    (integral, user["id"])
+                )
+                await db.commit()
+        finally:
+            await client.aclose()
+
+    return UserStatus(nick=user["nick"], integral=integral, task_status=t_status)
 
 @app.get("/tasks", response_model=list[TaskResponse])
 async def list_tasks(user = Depends(get_current_user), db: aiosqlite.Connection = Depends(get_db)):
@@ -335,3 +355,5 @@ async def ws_logs_endpoint(uid: int, websocket: WebSocket):
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    frontend_dir = Path(__file__).resolve().parent.parent / "frontend"
+    app.mount("/", StaticFiles(directory=str(frontend_dir), html=True), name="frontend")

@@ -1,4 +1,4 @@
-const API_BASE = window.PANGGUAI_API_BASE || "http://localhost:8000";
+const API_BASE = "";
 const STORAGE_KEY = "pangguai_session";
 const UID_KEY = "pangguai_uid";
 // 使用较新的红米 Note 机型 UA 作为默认展示。
@@ -94,6 +94,9 @@ function renderTableData(container, rows) {
   const headers = Object.keys(rows[0] || {});
   const wrapper = document.createElement("div");
   wrapper.className = "table-wrapper";
+  // 添加ID方便调试或后续扩展
+  wrapper.id = "drag-scroll-wrapper";
+
   const table = document.createElement("table");
   table.className = "data-table";
 
@@ -124,7 +127,12 @@ function renderTableData(container, rows) {
         td.className = "cell-truncate";
         td.textContent = val;
         td.title = val;
-        td.onclick = () => alert(val);
+        // 防止拖拽时误触发点击
+        td.onclick = (e) => {
+          if (wrapper.getAttribute("data-is-dragging") !== "true") {
+            alert(val);
+          }
+        };
       } else {
         td.textContent = val !== null && val !== undefined ? val : "-";
       }
@@ -136,6 +144,50 @@ function renderTableData(container, rows) {
   table.appendChild(tbody);
   wrapper.appendChild(table);
   container.appendChild(wrapper);
+
+  // --- 新增：实现鼠标按住拖拽滚动功能 ---
+  let isDown = false;
+  let startX, startY;
+  let scrollLeft, scrollTop;
+
+  wrapper.addEventListener("mousedown", (e) => {
+    isDown = true;
+    wrapper.classList.add("active");
+    wrapper.setAttribute("data-is-dragging", "false");
+    startX = e.pageX - wrapper.offsetLeft;
+    startY = e.pageY - wrapper.offsetTop;
+    scrollLeft = wrapper.scrollLeft;
+    scrollTop = wrapper.scrollTop;
+  });
+
+  wrapper.addEventListener("mouseleave", () => {
+    isDown = false;
+    wrapper.classList.remove("active");
+  });
+
+  wrapper.addEventListener("mouseup", () => {
+    isDown = false;
+    wrapper.classList.remove("active");
+    setTimeout(() => wrapper.setAttribute("data-is-dragging", "false"), 50);
+  });
+
+  wrapper.addEventListener("mousemove", (e) => {
+    if (!isDown) return;
+    e.preventDefault();
+
+    const x = e.pageX - wrapper.offsetLeft;
+    const y = e.pageY - wrapper.offsetTop;
+
+    const walkX = (x - startX) * 1.5;
+    const walkY = (y - startY) * 1.5;
+
+    if (Math.abs(walkX) > 5 || Math.abs(walkY) > 5) {
+      wrapper.setAttribute("data-is-dragging", "true");
+    }
+
+    wrapper.scrollLeft = scrollLeft - walkX;
+    wrapper.scrollTop = scrollTop - walkY;
+  });
 }
 
 function looksLikeToken(val) {
@@ -459,12 +511,13 @@ function initDashboardPage() {
     wsDot: $("#ws-dot"),
     wsText: $("#ws-status-text"),
     optGeneral: $("#opt-general"),
-    optVideo: $("#opt-video"),
     optAlipay: $("#opt-alipay"),
     logout: $("#logout-btn"),
   };
 
   let pollTimer = null;
+  let refreshBalanceNext = true;
+  let wasActive = false;
 
   els.logout?.addEventListener("click", () => {
     clearToken();
@@ -481,7 +534,6 @@ function initDashboardPage() {
         method: "POST",
         body: JSON.stringify({
           general: els.optGeneral?.checked,
-          video: els.optVideo?.checked,
           alipay: els.optAlipay?.checked,
         }),
       });
@@ -537,9 +589,19 @@ function initDashboardPage() {
 
     const check = async () => {
       try {
-        const res = await api("/api/user/status");
+        const useRefresh = refreshBalanceNext && !wasActive;
+        const res = await api(`/api/user/status${useRefresh ? "?refresh=1" : ""}`);
         updateUI(res);
         const isActive = res.task_status === "running" || res.task_status === "pending";
+        const justFinished = wasActive && !isActive;
+        wasActive = isActive;
+
+        if (justFinished) {
+          refreshBalanceNext = true;
+        } else if (useRefresh) {
+          refreshBalanceNext = false;
+        }
+
         const nextInterval = isActive ? 3000 : 10000;
         pollTimer = setTimeout(check, nextInterval);
       } catch (err) {

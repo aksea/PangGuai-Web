@@ -1,7 +1,6 @@
 # --- core/runner.py ---
 import asyncio
 import random
-import time
 from typing import Callable, Dict, Optional, Any
 
 from core.client import PangGuaiClient
@@ -22,24 +21,25 @@ class AsyncPangGuaiRunner:
         self.stop_event = stop_event
         self.client: Optional[PangGuaiClient] = None
         
+        # === 白名单策略配置 ===
+        # 1. 允许的任务类型：604(浏览), 605(小程序), 606(视频广告)
+        self.ALLOWED_TYPES = {604, 605, 606}
+        
+        # 2. 敏感词黑名单：标题含这些词的一律不做
+        self.SENSITIVE_KEYWORDS = ["认证", "绑卡", "充值", "开通", "办卡", "上传", "完善"]
+        
+        # 3. 兜底黑名单：即使类型符合，这些 ID 也不做
         self.excluded_task_codes = {
-            "7328b1db-d001-4e6a-a9e6-6ae8d281ddbf",
-            "e8f837b8-4317-4bf5-89ca-99f809bf9041",
-            "65a4e35d-c8ae-4732-adb7-30f8788f2ea7",
-            "73f9f146-4b9a-4d14-9d81-3a83f1204b74",
-            "12e8c1e4-65d9-45f2-8cc1-16763e710036",
+            "7", # 打开通知
         }
 
     async def _sleep(self, min_s: int, max_s: int = 0):
         """支持中断的智能睡眠"""
         seconds = min_s if max_s == 0 else random.randint(min_s, max_s)
         try:
-            # 如果 stop_event 被设置，这里会立即返回(或抛出超时)
-            # wait_for 配合 event.wait() 实现"睡x秒，但可随时被打断"
             await asyncio.wait_for(self.stop_event.wait(), timeout=seconds)
             raise InterruptedError("任务被停止")
         except asyncio.TimeoutError:
-            # 正常睡醒
             pass
 
     async def _check_stop(self):
@@ -50,8 +50,12 @@ class AsyncPangGuaiRunner:
         self.client = PangGuaiClient(self.token, self.ua, self.device_id)
         start_balance = 0
         username = None
+        
         def log_resp(tag: str, res: Optional[Dict[str, Any]]):
-            self.log(f"{tag} 响应: {res}")
+            if not res: return
+            # 仅在 code!=0 时记录异常日志，保持控制台清爽
+            if res.get("code") != 0:
+                self.log(f"{tag} 异常: {res.get('msg')}")
         
         try:
             # 1. 初始化信息
@@ -59,142 +63,155 @@ class AsyncPangGuaiRunner:
             user_info = await self.client.request("post", "https://userapi.qiekj.com/user/info", {"token": self.token})
             if user_info and user_info.get("code") == 0:
                 username = user_info["data"].get("userName")
-            log_resp("用户信息", user_info)
             
-            await self._check_stop()
             bal_res = await self.client.request("post", "https://userapi.qiekj.com/user/balance", {"token": self.token})
             if bal_res and bal_res.get("code") == 0:
                 start_balance = int(bal_res["data"]["integral"])
-            log_resp("查询积分", bal_res)
+            self.log(f"用户: {username}, 初始积分: {start_balance}")
 
-            await self._check_stop()
             await self._sleep(1)
 
+            # 2. 常规任务流程 (含视频广告)
             if self.options.general:
-                self.log("开始常规任务...")
+                self.log(">>> 开始基础日常任务")
+                
+                # 签到
                 sign_res = await self.client.request("post", "https://userapi.qiekj.com/signin/doUserSignIn", 
                                                      {"activityId": "600001", "token": self.token})
                 if sign_res:
-                    code = sign_res.get("code")
-                    if code == 0:
-                        self.log(f"签到成功，积分 {sign_res['data'].get('totalIntegral')}")
-                    elif code == 33001:
+                    if sign_res.get("code") == 0:
+                        self.log(f"签到成功 +{sign_res['data'].get('totalIntegral')}")
+                    elif sign_res.get("code") == 33001:
                         self.log("今日已签到")
-                log_resp("签到响应", sign_res)
                 
-                await self._check_stop()
                 await self._sleep(2)
 
+                # 屏蔽查询 & 首页浏览
                 await self.client.request("post", "https://userapi.qiekj.com/shielding/query", 
                                          {"shieldingResourceType": "1", "token": self.token})
-                self.log("屏蔽查询完成")
-                await self._sleep(3)
-
+                
                 home_res = await self.client.request("post", "https://userapi.qiekj.com/task/queryByType",
                                                     {"taskCode": "8b475b42-df8b-4039-b4c1-f9a0174a611a", "token": self.token})
-                log_resp("首页浏览", home_res)
+                if home_res and home_res.get("code") == 0 and home_res.get("data") is True:
+                    self.log("首页浏览 +1")
                 
                 await self._sleep(2)
 
+                # --- 任务列表循环 (白名单模式) ---
                 tasks_res = await self.client.request("post", "https://userapi.qiekj.com/task/list", {"token": self.token})
-                items = tasks_res["data"].get("items", []) if (tasks_res and tasks_res.get("code")==0) else []
-                log_resp("任务列表", tasks_res)
+                items = tasks_res.get("data", {}).get("items", []) if tasks_res else []
                 
+                valid_count = 0
                 for item in items:
                     await self._check_stop()
-                    if item.get("completedStatus") == 0 and item.get("taskCode") not in self.excluded_task_codes:
-                        title = item.get("title", "未知任务")
-                        self.log(f"执行任务: {title}")
+                    
+                    t_title = item.get("title", "")
+                    t_type = item.get("type")
+                    t_code = item.get("taskCode")
+                    t_status = item.get("completedStatus")
+
+                    # --- 核心过滤逻辑 ---
+                    if t_status != 0: continue # 已完成
+                    
+                    # 白名单类型过滤
+                    if t_type not in self.ALLOWED_TYPES:
+                        # self.log(f"跳过类型 {t_type}: {t_title}")
+                        continue
                         
-                        limit = item.get("dailyTaskLimit", 1)
-                        if limit == -1: limit = 1
-                        task_type = item.get("type")
+                    # 敏感词过滤
+                    if any(k in t_title for k in self.SENSITIVE_KEYWORDS):
+                        self.log(f"跳过敏感任务: {t_title}")
+                        continue
                         
-                        consecutive_failures = 0
-                        for idx in range(limit):
-                            await self._check_stop()
-                            wait_t = random.randint(18, 25) if task_type == 606 else random.randint(6, 10)
-                            self.log(f"  > 模拟浏览 {wait_t}s...")
-                            await self._sleep(wait_t)
-                            
-                            await self._check_stop()
-                            do_res = await self.client.request("post", "https://userapi.qiekj.com/task/completed",
-                                                              {"taskCode": item["taskCode"], "token": self.token})
-                            log_resp(f"  > 完成 {title} 尝试{idx+1}", do_res)
-                            
-                            if not do_res:
-                                consecutive_failures += 1
-                            elif do_res.get("code") == 0 and do_res.get("data") is True:
-                                self.log(f"  > 第 {idx+1} 次成功")
-                                consecutive_failures = 0
-                            elif do_res.get("code") == -1:
-                                self.log("  > 任务失效/结束，跳过")
-                                break
+                    # ID 黑名单过滤
+                    if t_code in self.excluded_task_codes:
+                        continue
+
+                    # --- 执行逻辑 ---
+                    valid_count += 1
+                    limit = max(1, item.get("dailyTaskLimit", 1))
+                    self.log(f"执行: {t_title}")
+                    
+                    # 针对广告任务(606)增加等待时间
+                    base_wait = 20 if t_type == 606 else 8
+                    consecutive_no_reward = 0
+                    
+                    for idx in range(limit):
+                        wait_t = random.randint(base_wait, base_wait + 5)
+                        if idx > 0: self.log(f"  > 冷却 {wait_t}s ...")
+                        else: await self._sleep(wait_t)
+                        
+                        do_res = await self.client.request("post", "https://userapi.qiekj.com/task/completed",
+                                                          {"taskCode": t_code, "token": self.token})
+                        
+                        if not do_res: continue
+                        
+                        code = do_res.get("code")
+                        data = do_res.get("data")
+                        
+                        if code == 0:
+                            if data is True:
+                                self.log(f"  > 第{idx+1}次完成 (+积分)")
+                                consecutive_no_reward = 0
                             else:
-                                self.log(f"  > 失败: {do_res.get('code')}")
-                                consecutive_failures += 1
-                            
-                            if consecutive_failures >= 3:
-                                self.log("  > 连续失败3次，跳过")
-                                break
-                            
-                            await self._sleep(2, 5)
+                                consecutive_no_reward += 1
+                                # self.log(f"  > 第{idx+1}次无奖励") 
+                                if consecutive_no_reward >= 3:
+                                    self.log("  > 多次无奖励，跳过此任务")
+                                    break
+                        elif code == -1:
+                            self.log("  > 任务失效/达上限，跳过")
+                            break
+                        else:
+                            log_resp(f"  > 任务{t_title}", do_res)
+                            break
+                        
+                        await self._sleep(2)
+                
+                if valid_count == 0:
+                    self.log("常规列表无待执行任务")
+
             else:
-                self.log("跳过常规任务")
+                self.log("跳过基础任务")
 
-            await self._check_stop()
+            await self._sleep(2)
 
-            # 5. 视频任务
-            if self.options.video:
-                self.log("开始 APP 视频任务...")
-                for i in range(20):
-                    await self._check_stop()
-                    await self._check_stop()
-                    v_res = await self.client.request("post", "https://userapi.qiekj.com/task/completed",
-                                                     {"taskCode": 2, "token": self.token})
-                    if v_res and v_res.get("code") == 0 and v_res.get("data") is True:
-                        self.log(f"视频 {i+1} 成功")
-                    elif v_res and v_res.get("code") == -1:
-                        self.log("视频任务结束")
-                        break
-                    
-                    await self._sleep(16, 22)
-
-            # 6. 支付宝任务 (切换 channel)
+            # 3. 支付宝隐藏任务 (TaskCode 9)
             if self.options.alipay:
-                self.log("开始支付宝视频任务...")
+                self.log(">>> 尝试支付宝隐藏任务 (x50)")
                 fail_streak = 0
+                success_count = 0
                 for i in range(50):
-                    await self._check_stop()
-                    await self._check_stop()
-                    # 特殊: 支付宝任务 taskCode=9
-                    ali_res = await self.client.request("post", "https://userapi.qiekj.com/task/completed",
-                                                       {"taskCode": 9, "token": self.token}, channel="alipay")
-                    log_resp(f"支付宝视频 {i+1}", ali_res)
+                    if self.stop_event.is_set(): raise InterruptedError()
                     
-                    if ali_res and ali_res.get("code") == 0 and ali_res.get("data") is True:
-                        self.log(f"支付宝视频 {i+1} 成功")
+                    res = await self.client.request("post", "https://userapi.qiekj.com/task/completed",
+                                                   {"taskCode": 9, "token": self.token}, channel="alipay")
+                    
+                    code = res.get("code") if res else -1
+                    data = res.get("data") if res else False
+                    
+                    if code == 0 and data is True:
+                        success_count += 1
+                        if success_count % 10 == 0: 
+                            self.log(f"支付宝任务已完成 {success_count} 次")
                         fail_streak = 0
                     else:
                         fail_streak += 1
-                        msg = ali_res.get("msg") if ali_res else "请求失败"
-                        self.log(f"支付宝视频 {i+1} 失败: {msg}")
-                        if fail_streak >= 3:
+                        if fail_streak >= 3: 
+                            self.log("支付宝接口失效或达上限，停止")
                             break
                     
                     await self._sleep(16, 22)
 
             # 结算
-            await self._check_stop()
-            await self._sleep(3)
-            await self._check_stop()
+            await self._sleep(2)
             end_bal_res = await self.client.request("post", "https://userapi.qiekj.com/user/balance", {"token": self.token})
-            end_balance = int(end_bal_res["data"]["integral"]) if end_bal_res else start_balance
+            end_balance = int(end_bal_res.get("data", {}).get("integral", 0)) if end_bal_res else start_balance
             gain = end_balance - start_balance
-            log_resp("结束积分查询", end_bal_res)
-            self.log(f"任务结束。当前积分: {end_balance}, 本次收益: {gain}")
-
+            self.log(f"任务结束。本次收益: {gain}, 余额: {end_balance}")
+            
             return {"username": username, "integral": end_balance, "gain": gain}
 
         finally:
-            await self.client.aclose()
+            if self.client:
+                await self.client.aclose()
